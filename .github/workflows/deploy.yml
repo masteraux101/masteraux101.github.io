@@ -1,0 +1,60 @@
+name: Deploy to GitHub Pages
+
+on:
+  # 手动触发
+  workflow_dispatch:
+  # 也可以设置为推送到主分支时触发
+  # push:
+  #   branches:
+  #     - main
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    
+    steps:
+      # 1. 检出当前仓库
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. 从源仓库下载产物
+      - name: Download artifacts from source repository
+        uses: actions/download-artifact@v4
+        with:
+          # 从 mental-texas-holdem 仓库下载产物
+          repository: masteraux101/mental-texas-holdem
+          # 工作流名称
+          workflow: publish.yml
+          # 产物保存目录
+          path: ./dist
+          # 使用仓库的token
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # 3. 复制产物到站点目录
+      - name: Copy artifacts to site
+        run: |
+          mkdir -p ./docs/mental-texas-holdem
+          cp -r ./dist/* ./docs/mental-texas-holdem/
+
+      # 4. 上传产物到 GitHub Pages
+      - name: Upload artifact to GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './docs'
+
+      # 5. 部署到 GitHub Pages
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
