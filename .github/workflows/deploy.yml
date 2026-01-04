@@ -4,9 +4,9 @@ on:
   # 手动触发
   workflow_dispatch:
   # 也可以设置为推送到主分支时触发
-  # push:
-  #   branches:
-  #     - main
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -29,32 +29,42 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. 从源仓库下载产物
+      # 2. 获取源仓库最新的工作流运行ID
+      - name: Get latest workflow run ID
+        id: get-run-id
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RUN_ID=$(gh run list --repo masteraux101/mental-texas-holdem --workflow publish.yml --status completed --limit 1 --json databaseId -q '.[0].databaseId')
+          echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
+          echo "Latest run ID: $RUN_ID"
+
+      # 3. 从源仓库下载产物
       - name: Download artifacts from source repository
         uses: actions/download-artifact@v4
         with:
           # 从 mental-texas-holdem 仓库下载产物
           repository: masteraux101/mental-texas-holdem
-          # 工作流名称
-          workflow: publish.yml
+          # 使用上一步获取的运行ID
+          run-id: ${{ steps.get-run-id.outputs.run_id }}
           # 产物保存目录
           path: ./dist
           # 使用仓库的token
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      # 3. 复制产物到站点目录
+      # 4. 复制产物到站点目录
       - name: Copy artifacts to site
         run: |
           mkdir -p ./docs/mental-texas-holdem
           cp -r ./dist/* ./docs/mental-texas-holdem/
 
-      # 4. 上传产物到 GitHub Pages
+      # 5. 上传产物到 GitHub Pages
       - name: Upload artifact to GitHub Pages
         uses: actions/upload-pages-artifact@v3
         with:
           path: './docs'
 
-      # 5. 部署到 GitHub Pages
+      # 6. 部署到 GitHub Pages
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
