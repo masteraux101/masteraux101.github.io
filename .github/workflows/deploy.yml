@@ -9,20 +9,11 @@ on:
       - main
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: "pages"
-  cancel-in-progress: false
+  contents: write
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     
     steps:
       # 1. 检出当前仓库
@@ -38,44 +29,23 @@ jobs:
           path: ./dist
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      # 2.5. 查看下载的产物内容
-      - name: List downloaded artifacts
+
+      # 3. 清空并复制产物到仓库中的 mental-texas-holdem 文件夹
+      - name: Copy artifacts to repository
         run: |
-          echo "=== Directory structure of ./dist ==="
-          ls -la ./dist/
-          echo ""
-          
-          # 检查是否有 tar 文件
-          if ls ./dist/*.tar* 1> /dev/null 2>&1; then
-            echo "=== Found tar archives, extracting... ==="
-            cd ./dist
-            for tar_file in *.tar*; do
-              echo "Extracting $tar_file..."
-              tar -tf "$tar_file" | head -20
-              tar -xf "$tar_file"
-            done
-            cd ..
-          fi
-          
-          echo ""
-          echo "=== Full file structure ==="
-          find ./dist -type f | sort
+          rm -rf ./mental-texas-holdem
+          mkdir -p ./mental-texas-holdem
+          cp -r ./dist/* ./mental-texas-holdem/
 
-      # 3. 复制产物到站点目录
-      - name: Copy artifacts to site
+      # 4. 配置 Git 并提交更改
+      - name: Configure Git and commit changes
         run: |
-          mkdir -p ./docs/mental-texas-holdem
-          cp -r ./dist/* ./docs/mental-texas-holdem/
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add mental-texas-holdem/
+          git commit -m "Update mental-texas-holdem artifacts" || echo "No changes to commit"
 
-      # 4. 上传产物到 GitHub Pages
-      - name: Upload artifact to GitHub Pages
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: './docs'
-
-      # 5. 部署到 GitHub Pages
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      # 5. 推送更改到 main 分支
+      - name: Push changes
+        run: |
+          git push origin main
