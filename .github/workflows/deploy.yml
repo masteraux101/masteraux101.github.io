@@ -29,42 +29,51 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. 获取源仓库最新的工作流运行ID
-      - name: Get latest workflow run ID
-        id: get-run-id
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          RUN_ID=$(gh run list --repo masteraux101/mental-texas-holdem --workflow publish.yml --status completed --limit 1 --json databaseId -q '.[0].databaseId')
-          echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
-          echo "Latest run ID: $RUN_ID"
-
-      # 3. 从源仓库下载产物
-      - name: Download artifacts from source repository
-        uses: actions/download-artifact@v4
+      # 2. 从源仓库的 gh-pages 分支检出代码
+      - name: Checkout gh-pages from source repository
+        uses: actions/checkout@v4
         with:
-          # 从 mental-texas-holdem 仓库下载产物
           repository: masteraux101/mental-texas-holdem
-          # 使用上一步获取的运行ID
-          run-id: ${{ steps.get-run-id.outputs.run_id }}
-          # 产物保存目录
+          ref: gh-pages
           path: ./dist
-          # 使用仓库的token
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      # 4. 复制产物到站点目录
+      # 2.5. 查看下载的产物内容
+      - name: List downloaded artifacts
+        run: |
+          echo "=== Directory structure of ./dist ==="
+          ls -la ./dist/
+          echo ""
+          
+          # 检查是否有 tar 文件
+          if ls ./dist/*.tar* 1> /dev/null 2>&1; then
+            echo "=== Found tar archives, extracting... ==="
+            cd ./dist
+            for tar_file in *.tar*; do
+              echo "Extracting $tar_file..."
+              tar -tf "$tar_file" | head -20
+              tar -xf "$tar_file"
+            done
+            cd ..
+          fi
+          
+          echo ""
+          echo "=== Full file structure ==="
+          find ./dist -type f | sort
+
+      # 3. 复制产物到站点目录
       - name: Copy artifacts to site
         run: |
           mkdir -p ./docs/mental-texas-holdem
           cp -r ./dist/* ./docs/mental-texas-holdem/
 
-      # 5. 上传产物到 GitHub Pages
+      # 4. 上传产物到 GitHub Pages
       - name: Upload artifact to GitHub Pages
         uses: actions/upload-pages-artifact@v3
         with:
           path: './docs'
 
-      # 6. 部署到 GitHub Pages
+      # 5. 部署到 GitHub Pages
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
