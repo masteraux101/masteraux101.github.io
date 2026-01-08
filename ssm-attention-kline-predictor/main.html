@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSM-Attention Candlestick Prediction</title>
+  <script type="module" crossorigin src="./assets/index-DGMvXjJR.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-DH2Sj3FU.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔮 SSM-Attention Candlestick Prediction</h1>
+            <p class="subtitle">Multi-source candlestick prediction with State Space Models and Attention</p>
+        </header>
+
+        <div class="control-panel">
+            <div class="panel-section">
+                <h3>📊 Data Configuration</h3>
+                
+                <!-- Data source selection -->
+                <div class="form-group">
+                    <label>Data Source Mode</label>
+                    <select id="dataSourceMode">
+                        <option value="mock">Mock Data</option>
+                        <option value="csv">Upload CSV (yfinance format)</option>
+                    </select>
+                </div>
+                
+                <!-- CSV upload area -->
+                <div id="csvUploadSection" class="csv-upload-section" style="display: none;">
+                    <div class="upload-zone" id="uploadZone">
+                        <div class="upload-icon">📁</div>
+                        <div class="upload-text">
+                            <p>Drag and drop CSV files here, or click to select</p>
+                            <p class="upload-hint">Supports yfinance format CSV files</p>
+                        </div>
+                        <div class="upload-buttons">
+                            <label class="upload-btn target-btn">
+                                🎯 Select Target File
+                                <input type="file" id="targetCsvFile" accept=".csv" class="file-input-hidden">
+                            </label>
+                            <label class="upload-btn related-btn">
+                                📊 Select Related Files (multiple)
+                                <input type="file" id="relatedCsvFiles" accept=".csv" multiple class="file-input-hidden">
+                            </label>
+                        </div>
+                    </div>
+                    <div class="uploaded-files" id="uploadedFilesList"></div>
+                    <div class="csv-format-hint">
+                        <strong>📋 CSV Format:</strong>
+                        <p>Supports yfinance export format with columns:</p>
+                        <code>Date, Open, High, Low, Close, Volume</code>
+                        <p style="margin-top:8px;">💡 Use <code>yfinance</code> or <a href="https://finance.yahoo.com" target="_blank">Yahoo Finance</a> to get data</p>
+                    </div>
+                </div>
+                
+                <!-- Mock data configuration -->
+                <div id="mockDataSection">
+                    <div class="form-group">
+                        <label>Prediction Target</label>
+                        <select id="targetSymbol">
+                            <option value="SPY">SPY (S&P 500 ETF)</option>
+                            <option value="QQQ">QQQ (Nasdaq 100 ETF)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Related Data Sources</label>
+                        <div class="checkbox-group">
+                            <label><input type="checkbox" value="VIX" checked> VIX (Volatility Index)</label>
+                            <label><input type="checkbox" value="TLT" checked> TLT (Treasury Bond ETF)</label>
+                            <label><input type="checkbox" value="GLD"> GLD (Gold ETF)</label>
+                            <label><input type="checkbox" value="DXY"> DXY (US Dollar Index)</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Lookback Days</label>
+                    <input type="number" id="lookbackDays" value="30" min="20" max="200">
+                </div>
+                <div class="form-group">
+                    <label>Forecast Days</label>
+                    <input type="number" id="forecastDays" value="5" min="1" max="30">
+                </div>
+            </div>
+
+            <div class="panel-section">
+                <h3>🧠 Model Configuration</h3>
+                <div class="form-group">
+                    <label>SSM Hidden Dimension</label>
+                    <input type="number" id="ssmDim" value="32" min="16" max="256">
+                </div>
+                <div class="form-group">
+                    <label>State Dimension</label>
+                    <input type="number" id="stateDim" value="16" min="8" max="128">
+                </div>
+                <div class="form-group">
+                    <label>Attention Heads</label>
+                    <input type="number" id="numHeads" value="2" min="1" max="16">
+                </div>
+                <div class="form-group">
+                    <label>Training Epochs</label>
+                    <input type="number" id="epochs" value="20" min="10" max="500">
+                </div>
+                <div class="form-group">
+                    <label>Learning Rate</label>
+                    <input type="number" id="learningRate" value="0.001" min="0.0001" max="0.1" step="0.0001">
+                </div>
+            </div>
+
+            <div class="panel-section action-section">
+                <button id="loadDataBtn" class="btn primary">📥 Load Data</button>
+                <button id="trainBtn" class="btn success" disabled>🚀 Train Model</button>
+                <button id="predictBtn" class="btn warning" disabled>🔮 Predict</button>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="chart-section">
+                <h3>📈 Chart</h3>
+                <div class="chart-tabs">
+                    <button class="tab-btn active" data-tab="candlestick">Candlestick</button>
+                    <button class="tab-btn" data-tab="comparison">Multi-source</button>
+                    <button class="tab-btn" data-tab="prediction">Prediction</button>
+                </div>
+                <div class="chart-container">
+                    <canvas id="mainChart"></canvas>
+                </div>
+            </div>
+
+            <div class="info-section">
+                <div class="metrics-panel">
+                    <h3>📊 Model Metrics</h3>
+                    <div class="metrics-grid">
+                        <div class="metric-card">
+                            <span class="metric-label">Training Loss</span>
+                            <span class="metric-value" id="trainLoss">-</span>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-label">Validation Loss</span>
+                            <span class="metric-value" id="valLoss">-</span>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-label">Direction Accuracy</span>
+                            <span class="metric-value" id="dirAccuracy">-</span>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-label">Correlation</span>
+                            <span class="metric-value" id="correlation">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="attention-panel">
+                    <h3>🎯 Attention Weights</h3>
+                    <div id="attentionViz">
+                        <p class="placeholder">Attention weights will appear after training</p>
+                    </div>
+                </div>
+
+                <div class="log-panel">
+                    <h3>📝 Training Log</h3>
+                    <div id="logContainer" class="log-container">
+                        <p class="log-entry info">System ready. Please load data to begin...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="architecture-section">
+            <h3>🏗️ Model Architecture</h3>
+            <div class="architecture-diagram">
+                <div class="arch-block input-block">
+                    <h4>Input</h4>
+                    <p>Multi-source OHLCV<br>(OHLCV × N)</p>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-block ssm-block">
+                    <h4>SSM Layer</h4>
+                    <p>State Space Expansion<br>Sequence Features</p>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-block attention-block">
+                    <h4>Cross-Attention</h4>
+                    <p>Multi-source Analysis<br>Weight Learning</p>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-block output-block">
+                    <h4>Output</h4>
+                    <p>Predicted OHLC<br>Price Sequence</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>
