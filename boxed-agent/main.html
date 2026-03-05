@@ -7,8 +7,8 @@
   <meta name="description" content="A fully browser-based AI assistant with SOUL personality and Skill system, powered by Gemini API." />
 
   <!-- App styles -->
-  <script type="module" crossorigin src="/boxed-agent/assets/index-B36zKTAv.js"></script>
-  <link rel="stylesheet" crossorigin href="/boxed-agent/assets/index-Cz47m8aT.css">
+  <script type="module" crossorigin src="/boxed-agent/assets/index-7ADcgCv6.js"></script>
+  <link rel="stylesheet" crossorigin href="/boxed-agent/assets/index-DzYMYuAF.css">
 </head>
 <body>
 
@@ -76,22 +76,17 @@
 
       <div class="settings-field">
         <label for="set-api-key">Gemini API Key</label>
-        <input type="password" id="set-api-key" placeholder="AIza..." autocomplete="off" />
+        <div class="password-input-group">
+          <input type="password" id="set-api-key" placeholder="AIza..." autocomplete="off" />
+          <button type="button" class="password-toggle" data-for="set-api-key" title="Show/hide">👁</button>
+        </div>
         <div class="hint">Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--accent)">aistudio.google.com</a></div>
       </div>
 
       <div class="settings-field">
         <label for="set-model">Model</label>
-        <input type="text" id="set-model" placeholder="gemini-2.5-flash-preview-05-20" list="model-suggestions" />
-        <datalist id="model-suggestions">
-          <option value="gemini-2.5-flash-preview-05-20">
-          <option value="gemini-2.5-pro-preview-05-06">
-          <option value="gemini-2.0-flash">
-          <option value="gemini-2.0-flash-lite">
-          <option value="gemini-1.5-pro">
-          <option value="gemini-1.5-flash">
-        </datalist>
-        <div class="hint">Type any Gemini model ID, or pick from suggestions</div>
+        <input type="text" id="set-model" placeholder="e.g. gemini-2.5-flash-preview-05-20" />
+        <div class="hint">Enter the Gemini model ID you want to use</div>
       </div>
 
       <div class="settings-field">
@@ -148,7 +143,10 @@
 
       <div class="settings-field">
         <label for="set-notion-token">Notion Integration Token (optional)</label>
-        <input type="password" id="set-notion-token" placeholder="ntn_..." autocomplete="off" />
+        <div class="password-input-group">
+          <input type="password" id="set-notion-token" placeholder="ntn_..." autocomplete="off" />
+          <button type="button" class="password-toggle" data-for="set-notion-token" title="Show/hide">👁</button>
+        </div>
         <div class="hint">Required only when loading SOUL/Skills from private Notion pages</div>
       </div>
 
@@ -165,7 +163,10 @@
 
       <div class="settings-field">
         <label for="set-passphrase">🔐 Encryption Passphrase</label>
-        <input type="password" id="set-passphrase" placeholder="Enter passphrase…" autocomplete="off" />
+        <div class="password-input-group">
+          <input type="password" id="set-passphrase" placeholder="Enter passphrase…" autocomplete="off" />
+          <button type="button" class="password-toggle" data-for="set-passphrase" title="Show/hide">👁</button>
+        </div>
         <div class="hint">Used to encrypt this session's history. <strong>Cannot be changed</strong> after first save.</div>
       </div>
 
@@ -182,7 +183,10 @@
       <div id="github-fields" class="hidden">
         <div class="settings-field">
           <label for="set-github-token">GitHub Personal Access Token</label>
-          <input type="password" id="set-github-token" placeholder="ghp_..." autocomplete="off" />
+          <div class="password-input-group">
+            <input type="password" id="set-github-token" placeholder="ghp_..." autocomplete="off" />
+            <button type="button" class="password-toggle" data-for="set-github-token" title="Show/hide">👁</button>
+          </div>
           <div class="hint">Needs <code>repo</code> scope for private repos, or <code>public_repo</code> for public</div>
         </div>
         <div class="settings-field">
@@ -211,7 +215,10 @@
       <div id="notion-storage-fields" class="hidden">
         <div class="settings-field">
           <label for="set-notion-storage-token">Notion Integration Token</label>
-          <input type="password" id="set-notion-storage-token" placeholder="ntn_..." autocomplete="off" />
+          <div class="password-input-group">
+            <input type="password" id="set-notion-storage-token" placeholder="ntn_..." autocomplete="off" />
+            <button type="button" class="password-toggle" data-for="set-notion-storage-token" title="Show/hide">👁</button>
+          </div>
         </div>
         <div class="settings-field">
           <label for="set-notion-parent-page">Parent Page ID</label>
@@ -236,7 +243,10 @@
       <div id="action-custom-repo-fields" class="hidden">
         <div class="settings-field">
           <label for="set-action-token">GitHub Token</label>
-          <input type="password" id="set-action-token" placeholder="ghp_..." autocomplete="off" />
+          <div class="password-input-group">
+            <input type="password" id="set-action-token" placeholder="ghp_..." autocomplete="off" />
+            <button type="button" class="password-toggle" data-for="set-action-token" title="Show/hide">👁</button>
+          </div>
         </div>
         <div class="settings-field">
           <label for="set-action-owner">Repository Owner</label>
@@ -278,7 +288,10 @@
       <div class="settings-group-title">🔔 Notifications</div>
       <div class="settings-field">
         <label for="set-resend-api-key">Resend API Key</label>
-        <input type="password" id="set-resend-api-key" placeholder="re_..." autocomplete="off" />
+        <div class="password-input-group">
+          <input type="password" id="set-resend-api-key" placeholder="re_..." autocomplete="off" />
+          <button type="button" class="password-toggle" data-for="set-resend-api-key" title="Show/hide">👁</button>
+        </div>
         <div class="hint">Free at <a href="https://resend.com" target="_blank">resend.com</a> — 100 emails/day, no credit card</div>
       </div>
       <div class="settings-field">
@@ -302,7 +315,10 @@
     <h3>⬇ Restore Sessions from GitHub</h3>
     <p>Enter your GitHub credentials to restore sessions stored in a repository.</p>
     <div class="restore-fields">
-      <input type="password" id="restore-github-token" placeholder="GitHub Personal Access Token (ghp_...)" autocomplete="off" />
+      <div class="password-input-group">
+        <input type="password" id="restore-github-token" placeholder="GitHub Personal Access Token (ghp_...)" autocomplete="off" />
+        <button type="button" class="password-toggle" data-for="restore-github-token" title="Show/hide">👁</button>
+      </div>
       <input type="text" id="restore-github-owner" placeholder="Repository Owner (username)" />
       <input type="text" id="restore-github-repo" placeholder="Repository Name" />
       <input type="text" id="restore-github-path" placeholder="Sessions directory (default: sessions)" />
@@ -320,7 +336,10 @@
   <div class="passphrase-card">
     <h3>🔐 Decrypt Session</h3>
     <p id="passphrase-message">Enter the passphrase to decrypt this session.</p>
-    <input type="password" id="passphrase-input" placeholder="Enter passphrase…" autocomplete="off" />
+    <div class="password-input-group" style="margin-bottom:8px">
+      <input type="password" id="passphrase-input" placeholder="Enter passphrase…" autocomplete="off" />
+      <button type="button" class="password-toggle" data-for="passphrase-input" title="Show/hide">👁</button>
+    </div>
     <div class="passphrase-actions">
       <button id="passphrase-cancel">Cancel</button>
       <button id="passphrase-submit">Decrypt</button>
