@@ -7,8 +7,8 @@
   <meta name="description" content="A fully browser-based AI workbench with SOUL personality and Skill system, supporting multiple model providers." />
 
   <!-- App styles -->
-  <script type="module" crossorigin src="/boxed-agent/assets/index-DS0bePWQ.js"></script>
-  <link rel="stylesheet" crossorigin href="/boxed-agent/assets/index-DzYMYuAF.css">
+  <script type="module" crossorigin src="/boxed-agent/assets/index-D-Qh5lH8.js"></script>
+  <link rel="stylesheet" crossorigin href="/boxed-agent/assets/index-DZLGmuAw.css">
 </head>
 <body>
 
@@ -71,25 +71,36 @@
 
   <div class="settings-body">
 
+    <div class="settings-field hidden" id="passphrase-field-top">
+      <label for="set-passphrase">🔐 Encryption Passphrase</label>
+      <div class="password-input-group">
+        <input type="password" id="set-passphrase" placeholder="Enter passphrase..." autocomplete="off" />
+        <button type="button" class="password-toggle" data-for="set-passphrase" title="Show/hide">👁</button>
+      </div>
+      <div class="hint">Used to encrypt this session's history. <strong>Cannot be changed</strong> after first save.</div>
+    </div>
+
     <!-- AI Settings -->
     <div class="settings-group" id="settings-section-ai">
       <div class="settings-group-title">AI Configuration</div>
 
-      <div class="settings-field">
-        <label for="set-provider">AI Provider</label>
-        <select id="set-provider">
-          <option value="">-- Select Provider --</option>
-          <option value="gemini">Google Gemini</option>
-          <option value="qwen">Qwen (via DashScope)</option>
-        </select>
-        <div class="hint">Choose your preferred AI model provider</div>
-      </div>
+      <div class="settings-row">
+        <div class="settings-field">
+          <label for="set-provider">AI Provider</label>
+          <select id="set-provider">
+            <option value="">-- Select Provider --</option>
+            <option value="gemini">Google Gemini</option>
+            <option value="qwen">Qwen (via DashScope)</option>
+          </select>
+          <div class="hint">Choose your preferred AI model provider</div>
+        </div>
 
-      <div class="settings-field">
-        <label for="set-model">AI Model</label>
-        <input type="text" id="set-model" placeholder="e.g., gemini-2.5-flash or qwen-turbo" />
-        <div class="hint">Enter the model ID (e.g., gemini-2.5-flash, qwen-turbo, qwen-max)</div>
-        <div class="hint" id="model-capability-hint"></div>
+        <div class="settings-field">
+          <label for="set-model">AI Model</label>
+          <input type="text" id="set-model" placeholder="e.g., gemini-2.5-flash or qwen3-max-2026-01-23" />
+          <div class="hint">Enter the model ID (e.g., gemini-2.5-flash, qwen3-max-2026-01-23)</div>
+          <div class="hint" id="model-capability-hint"></div>
+        </div>
       </div>
 
       <div id="gemini-fields">
@@ -182,15 +193,6 @@
     <!-- Session Storage -->
     <div class="settings-group" id="settings-section-storage">
       <div class="settings-group-title">Encrypted Session Storage</div>
-
-      <div class="settings-field">
-        <label for="set-passphrase">🔐 Encryption Passphrase</label>
-        <div class="password-input-group">
-          <input type="password" id="set-passphrase" placeholder="Enter passphrase…" autocomplete="off" />
-          <button type="button" class="password-toggle" data-for="set-passphrase" title="Show/hide">👁</button>
-        </div>
-        <div class="hint">Used to encrypt this session's history. <strong>Cannot be changed</strong> after first save.</div>
-      </div>
 
       <div class="settings-field">
         <label for="set-storage-backend">Storage Backend</label>
