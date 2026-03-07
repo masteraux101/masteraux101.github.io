@@ -4,10 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>BrowserAgent — AI Workbench</title>
-  <meta name="description" content="A fully browser-based AI assistant with SOUL personality and Skill system, powered by Gemini API." />
+  <meta name="description" content="A fully browser-based AI workbench with SOUL personality and Skill system, supporting multiple model providers." />
 
   <!-- App styles -->
-  <script type="module" crossorigin src="/boxed-agent/assets/index-CH9-z_7i.js"></script>
+  <script type="module" crossorigin src="/boxed-agent/assets/index-DS0bePWQ.js"></script>
   <link rel="stylesheet" crossorigin href="/boxed-agent/assets/index-DzYMYuAF.css">
 </head>
 <body>
@@ -149,17 +149,16 @@
       <div class="settings-group-title">Personality & Skills</div>
 
       <div class="settings-field">
-        <label for="set-soul-preset">SOUL Preset</label>
+        <label for="set-soul-preset">SOUL Source</label>
         <select id="set-soul-preset">
           <option value="">— None —</option>
-          <!-- Built-in souls populated by JS -->
-          <option value="__custom__">Custom URL…</option>
+          <option value="__custom__">Use URL…</option>
         </select>
-        <div class="hint">Choose a built-in SOUL file or enter a custom URL</div>
+        <div class="hint">Use your own SOUL URL</div>
       </div>
 
       <div class="settings-field hidden" id="soul-url-field">
-        <label for="set-soul-url">Custom SOUL URL</label>
+        <label for="set-soul-url">SOUL URL</label>
         <input type="url" id="set-soul-url" placeholder="https://raw.githubusercontent.com/you/repo/main/SOUL.md" />
         <div class="hint">GitHub raw URL or Notion page URL</div>
       </div>
@@ -170,7 +169,7 @@
           <input type="password" id="set-notion-token" placeholder="ntn_..." autocomplete="off" />
           <button type="button" class="password-toggle" data-for="set-notion-token" title="Show/hide">👁</button>
         </div>
-        <div class="hint">Required only when loading SOUL/Skills from private Notion pages</div>
+        <div class="hint">Required only when loading private Notion SOUL/Skill URLs</div>
       </div>
 
       <div class="settings-field">
