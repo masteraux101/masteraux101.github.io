@@ -99,9 +99,44 @@ jobs:
 <!--/DEPLOY_BUNDLE-->
 ````
 
+## Pushoo Notification Integration
+
+If user wants multi-platform notifications instead of/in addition to email:
+
+Ask user to configure Pushoo in BrowserAgent Settings → Notifications → Pushoo:
+- Platform: (serverchan, telegram, discord, dingtalk, wecom, bark, feishu, etc.)
+- Token: (platform-specific notification token)
+
+When deploying, both RESEND and PUSHOO secrets are auto-synced. Replace the "Send email" step with:
+
+```yaml
+- name: Send notification
+  if: always()
+  env:
+    RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+    NOTIFY_EMAIL: ${{ vars.NOTIFY_EMAIL }}
+    PUSHOO_PLATFORM: ${{ secrets.PUSHOO_PLATFORM }}
+    PUSHOO_TOKEN: ${{ secrets.PUSHOO_TOKEN }}
+  run: |
+    OUTCOME="${{ steps.run_task.outcome }}"
+    CONTENT=$(cat /tmp/task_output.txt)
+    # Email via Resend (if configured)
+    [email notification code here]
+    # Pushoo notification (if PUSHOO_PLATFORM is set)
+    if [ -n "$PUSHOO_PLATFORM" ]; then
+      npm install -g pushoo 2>/dev/null || true
+      node -e "require('pushoo').default('$PUSHOO_PLATFORM', {
+        token: '$PUSHOO_TOKEN',
+        title: '[BrowserAgent] scheduled-task',
+        content: '## Status: $OUTCOME\n\n$CONTENT'
+      }).catch(e => console.warn('Pushoo failed:', e))"
+    fi
+```
+
 ## Notes
 
 - `onboarding@resend.dev` works on Resend free tier without domain verification
 - Secrets & variables are auto-synced on deploy — never tell user to add them manually
 - For Node.js: swap `setup-python` for `setup-node`, use `node` to run
+- Pushoo integration is OPTIONAL — only add if user has configured Pushoo tokens in BrowserAgent
 - **NEVER add setup instructions or bullet lists in your response**

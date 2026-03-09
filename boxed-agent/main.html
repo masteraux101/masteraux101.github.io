@@ -7,8 +7,8 @@
   <meta name="description" content="A fully browser-based AI workbench with SOUL personality and Skill system, supporting multiple model providers." />
 
   <!-- App styles -->
-  <script type="module" crossorigin src="/boxed-agent/assets/index-2XqwR9Ic.js"></script>
-  <link rel="stylesheet" crossorigin href="/boxed-agent/assets/index-DZLGmuAw.css">
+  <script type="module" crossorigin src="/boxed-agent/assets/index-BjSoTahG.js"></script>
+  <link rel="stylesheet" crossorigin href="/boxed-agent/assets/index-534gPF_9.css">
 </head>
 <body>
 
@@ -91,6 +91,7 @@
             <option value="">-- Select Provider --</option>
             <option value="gemini">Google Gemini</option>
             <option value="qwen">Qwen (via DashScope)</option>
+            <option value="kimi">Kimi (via Moonshot)</option>
           </select>
           <div class="hint">Choose your preferred AI model provider</div>
         </div>
@@ -122,6 +123,17 @@
             <button type="button" class="password-toggle" data-for="set-qwen-api-key" title="Show/hide">👁</button>
           </div>
           <div class="hint">DashScope key for Qwen models</div>
+        </div>
+      </div>
+
+      <div id="kimi-fields" class="hidden">
+        <div class="settings-field">
+          <label for="set-kimi-api-key">Kimi API Key</label>
+          <div class="password-input-group">
+            <input type="password" id="set-kimi-api-key" placeholder="sk-..." autocomplete="off" />
+            <button type="button" class="password-toggle" data-for="set-kimi-api-key" title="Show/hide">👁</button>
+          </div>
+          <div class="hint">Moonshot API key for Kimi models (from https://platform.moonshot.cn)</div>
         </div>
       </div>
 
@@ -311,18 +323,35 @@
 
     <div class="settings-group" id="settings-section-notify">
       <div class="settings-group-title">🔔 Notifications</div>
+      
+      <!-- Pushoo Notifications (Primary) -->
       <div class="settings-field">
-        <label for="set-resend-api-key">Resend API Key</label>
-        <div class="password-input-group">
-          <input type="password" id="set-resend-api-key" placeholder="re_..." autocomplete="off" />
-          <button type="button" class="password-toggle" data-for="set-resend-api-key" title="Show/hide">👁</button>
-        </div>
-        <div class="hint">Free at <a href="https://resend.com" target="_blank">resend.com</a> — 100 emails/day, no credit card</div>
+        <label>Pushoo Notifications <span id="pushoo-status-badge" style="font-size:12px;color:#888"></span></label>
+        <button id="pushoo-config-btn" class="btn-secondary" type="button">⚙️ Configure Pushoo</button>
+        <div class="hint">Send workflow completion notifications to multiple platforms (WeChat, Telegram, DingTalk, Discord, etc.) — <a href="https://pushoo.js.org/" target="_blank">View Pushoo docs →</a></div>
       </div>
-      <div class="settings-field">
-        <label for="set-notify-email">Default Notification Email</label>
-        <input type="email" id="set-notify-email" placeholder="you@example.com" />
-        <div class="hint">Used by GitHub Actions Scheduler skill for task completion emails</div>
+
+      <!-- Resend Email Notifications (Collapsible) -->
+      <div class="collapsible-section">
+        <button class="collapsible-header" type="button">
+          <span class="collapsible-toggle">▶</span>
+          <span>Email Notifications (Resend)</span>
+        </button>
+        <div class="collapsible-body">
+          <div class="settings-field">
+            <label for="set-resend-api-key">Resend API Key</label>
+            <div class="password-input-group">
+              <input type="password" id="set-resend-api-key" placeholder="re_..." autocomplete="off" />
+              <button type="button" class="password-toggle" data-for="set-resend-api-key" title="Show/hide">👁</button>
+            </div>
+            <div class="hint">Free at <a href="https://resend.com" target="_blank">resend.com</a> — 100 emails/day, no credit card</div>
+          </div>
+          <div class="settings-field">
+            <label for="set-notify-email">Default Notification Email</label>
+            <input type="email" id="set-notify-email" placeholder="you@example.com" />
+            <div class="hint">Used by GitHub Actions Scheduler skill for task completion emails</div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -368,6 +397,48 @@
     <div class="passphrase-actions">
       <button id="passphrase-cancel">Cancel</button>
       <button id="passphrase-submit">Decrypt</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Pushoo Configuration Dialog ═══ -->
+<div id="pushoo-config-dialog" class="hidden">
+  <div class="modal-overlay">
+    <div class="modal-content" style="max-width:480px">
+      <div class="modal-header">
+        <h2>📢 Pushoo Notifications</h2>
+        <button class="modal-close" id="pushoo-config-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin:0 0 12px;color:#777;font-size:13px">Receive scheduled task results via push notification.
+          <a href="https://pushoo.js.org/" target="_blank">Pushoo docs →</a></p>
+
+        <div class="settings-field" style="margin-bottom:12px">
+          <label class="schedule-checkbox-label" style="font-weight:500">
+            <input type="checkbox" id="pushoo-enabled"> Enable Pushoo notifications
+          </label>
+        </div>
+
+        <div class="settings-field" style="margin-bottom:12px">
+          <label for="pushoo-platform">Platform</label>
+          <select id="pushoo-platform" class="schedule-input" style="width:100%">
+            <!-- populated by JS -->
+          </select>
+        </div>
+
+        <div class="settings-field" style="margin-bottom:8px">
+          <label for="pushoo-token">Token / Key</label>
+          <div class="password-input-group">
+            <input type="password" id="pushoo-token" placeholder="..." autocomplete="off" />
+            <button type="button" class="password-toggle" data-for="pushoo-token" title="Show/hide">👁</button>
+          </div>
+          <div class="hint" id="pushoo-token-hint" style="margin-top:4px"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="pushoo-config-cancel" class="btn-secondary">Cancel</button>
+        <button id="pushoo-config-save" class="btn-primary">Save</button>
+      </div>
     </div>
   </div>
 </div>
