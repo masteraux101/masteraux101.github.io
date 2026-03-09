@@ -1,12 +1,12 @@
 [
-  { "name": "Code Review",            "file": "code-review.md",          "icon": "🔍", "description": "Systematic code review with actionable feedback" },
-  { "name": "Translator",             "file": "translator.md",           "icon": "🌐", "description": "Multi-language translation with cultural context" },
-  { "name": "Email via Resend",       "file": "email-resend.md",         "icon": "📧", "description": "Send transactional emails using the Resend API" },
-  { "name": "GitHub Actions Scheduler", "file": "github-scheduler.md",   "icon": "⏰", "description": "Schedule recurring tasks via GitHub Actions cron" },
-  { "name": "AI Prompt Scheduler",    "file": "ai-prompt-scheduler.md",  "icon": "🤖", "description": "Schedule recurring AI model calls with email delivery" },
-  { "name": "Web Scraper",            "file": "web-scraper.md",          "icon": "🕷️", "description": "Generate Python scripts to scrape and extract web data" },
-  { "name": "Data Visualization",     "file": "data-visualization.md",   "icon": "📈", "description": "Create charts and visualizations with matplotlib" },
-  { "name": "Summary & Digest",       "file": "summary-digest.md",      "icon": "📋", "description": "Summarize texts, articles, and documents into concise digests" },
-  { "name": "Writing Polish",         "file": "writing-polish.md",       "icon": "✏️", "description": "Improve writing quality — grammar, clarity, tone, style" },
-  { "name": "JSON/API Helper",        "file": "json-api-helper.md",      "icon": "🔧", "description": "Parse, transform JSON and design REST APIs" }
+  { "name": "Code Review",            "file": "code-review.txt",          "icon": "🔍", "description": "Systematic code review with actionable feedback" },
+  { "name": "Translator",             "file": "translator.txt",           "icon": "🌐", "description": "Multi-language translation with cultural context" },
+  { "name": "Email via Resend",       "file": "email-resend.txt",         "icon": "📧", "description": "Send transactional emails using the Resend API" },
+  { "name": "GitHub Actions Scheduler", "file": "github-scheduler.txt",   "icon": "⏰", "description": "Schedule recurring tasks via GitHub Actions cron" },
+  { "name": "AI Prompt Scheduler",    "file": "ai-prompt-scheduler.txt",  "icon": "🤖", "description": "Schedule recurring AI model calls with email delivery" },
+  { "name": "Web Scraper",            "file": "web-scraper.txt",          "icon": "🕷️", "description": "Generate Python scripts to scrape and extract web data" },
+  { "name": "Data Visualization",     "file": "data-visualization.txt",   "icon": "📈", "description": "Create charts and visualizations with matplotlib" },
+  { "name": "Summary & Digest",       "file": "summary-digest.txt",      "icon": "📋", "description": "Summarize texts, articles, and documents into concise digests" },
+  { "name": "Writing Polish",         "file": "writing-polish.txt",       "icon": "✏️", "description": "Improve writing quality — grammar, clarity, tone, style" },
+  { "name": "JSON/API Helper",        "file": "json-api-helper.txt",      "icon": "🔧", "description": "Parse, transform JSON and design REST APIs" }
 ]
