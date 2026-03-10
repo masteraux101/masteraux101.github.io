@@ -7,8 +7,8 @@
   <meta name="description" content="A fully browser-based AI workbench with SOUL personality and Skill system, supporting multiple model providers." />
 
   <!-- App styles -->
-  <script type="module" crossorigin src="/boxed-agent/assets/index-BjSoTahG.js"></script>
-  <link rel="stylesheet" crossorigin href="/boxed-agent/assets/index-534gPF_9.css">
+  <script type="module" crossorigin src="/boxed-agent/assets/index-w10KGQW4.js"></script>
+  <link rel="stylesheet" crossorigin href="/boxed-agent/assets/index-D7g-2sr9.css">
 </head>
 <body>
 
@@ -34,8 +34,8 @@
       <button id="sidebar-toggle" title="Toggle sidebar">☰</button>
       <span id="header-soul-name">BrowserAgent</span>
       <div class="header-spacer"></div>
+      <button id="lang-toggle-btn" title="Switch language">EN</button>
       <div id="token-display" class="token-display hidden" title="Token usage this session">
-        <span class="token-icon">🪙</span>
         <span id="token-count">0 tokens</span>
       </div>
       <button id="settings-btn" title="Settings">⚙</button>
@@ -45,6 +45,12 @@
     <div id="chat-box"></div>
 
     <!-- Input Area -->
+    <div class="quick-actions" id="quick-actions">
+      <button class="quick-action-btn" id="quick-btn-skills" data-cmd="/skills" title="Manage skills">🧩 Skills</button>
+      <button class="quick-action-btn" id="quick-btn-souls" data-cmd="/soul list" title="Browse SOULs">🧠 Souls</button>
+      <button class="quick-action-btn" id="quick-btn-schedule" data-cmd="/schedule" title="Create scheduled task">⏰ Schedule</button>
+      <button class="quick-action-btn" id="quick-btn-compact" data-cmd="/compact" title="Compress context">📦 Compact</button>
+    </div>
     <div class="input-area">
       <div id="slash-autocomplete" class="hidden"></div>
       <textarea
