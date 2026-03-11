@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🍤 Shrimp — Multi-Provider AI Workspace</title>
+  <meta name="description" content="A fully browser-based multi-provider AI workspace with SOUL personality customization, Skill system, encrypted storage, and GitHub Actions execution." />
+
+  <!-- App styles -->
+  <script type="module" crossorigin src="/shrimp/assets/index-CKPlyGCS.js"></script>
+  <link rel="stylesheet" crossorigin href="/shrimp/assets/index-CdLzsErO.css">
+</head>
+<body>
+
+<div class="app-container">
+
+  <!-- ═══ Sidebar ═══ -->
+  <aside id="sidebar">
+    <div class="sidebar-header">
+      <h3>Sessions</h3>
+      <div class="sidebar-header-actions">
+        <button id="restore-sessions-btn" title="Restore sessions from GitHub">⬇</button>
+        <button id="new-session-btn" title="New session">+</button>
+      </div>
+    </div>
+    <div id="session-list"></div>
+  </aside>
+
+  <!-- ═══ Main Area ═══ -->
+  <div class="main-area">
+
+    <!-- Header -->
+    <header class="header">
+      <button id="sidebar-toggle" title="Toggle sidebar">☰</button>
+      <span id="header-soul-name">🍤 Shrimp</span>
+      <div class="header-spacer"></div>
+      <button id="lang-toggle-btn" title="Switch language">EN</button>
+      <div id="token-display" class="token-display hidden" title="Token usage this session">
+        <span id="token-count">0 tokens</span>
+      </div>
+      <button id="settings-btn" title="Settings">⚙</button>
+    </header>
+
+    <!-- Chat Messages -->
+    <div id="chat-box"></div>
+
+    <!-- Input Area -->
+    <div class="quick-actions" id="quick-actions">
+      <button class="quick-action-btn" id="quick-btn-skills" data-cmd="/skills" title="Manage skills">🧩 Skills</button>
+      <button class="quick-action-btn" id="quick-btn-souls" data-cmd="/soul list" title="Browse SOULs">🧠 Souls</button>
+      <button class="quick-action-btn" id="quick-btn-schedule" data-cmd="/schedule" title="Create scheduled task">⏰ Schedule</button>
+      <button class="quick-action-btn" id="quick-btn-compact" data-cmd="/compact" title="Compress context">📦 Compact</button>
+      <button class="quick-action-btn" id="quick-btn-loop" data-cmd="/loop" title="Loop Agent">🔄 Loop</button>
+    </div>
+    <div class="input-area">
+      <div id="loop-context-banner" class="loop-context-banner hidden">
+        <span id="loop-context-label">🔄 Loop mode: <strong id="loop-context-key"></strong></span>
+        <button id="loop-context-exit" title="Exit loop mode">✕</button>
+      </div>
+      <div id="slash-autocomplete" class="hidden"></div>
+      <textarea
+        id="message-input"
+        placeholder="Type a message… (Enter to send, Shift+Enter for new line)"
+        rows="1"
+      ></textarea>
+      <button id="send-btn" title="Send">▶</button>
+      <button id="stop-btn" class="hidden" title="Stop generation">■</button>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══ Settings Panel (drawer) ═══ -->
+<div id="settings-panel" class="hidden">
+  <div class="settings-header">
+    <div>
+      <h3 id="settings-title">⚙ Settings</h3>
+      <div id="settings-subtitle" class="settings-subtitle"></div>
+    </div>
+    <button id="close-settings">✕</button>
+  </div>
+
+  <div class="settings-body">
+
+    <div class="settings-field hidden" id="passphrase-field-top">
+      <label for="set-passphrase">🔐 Encryption Passphrase</label>
+      <div class="password-input-group">
+        <input type="password" id="set-passphrase" placeholder="Enter passphrase..." autocomplete="off" />
+        <button type="button" class="password-toggle" data-for="set-passphrase" title="Show/hide">👁</button>
+      </div>
+      <div class="hint">Used to encrypt this session's history. <strong>Cannot be changed</strong> after first save.</div>
+    </div>
+
+    <!-- AI Settings -->
+    <div class="settings-group" id="settings-section-ai">
+      <div class="settings-group-title">AI Configuration</div>
+
+      <div class="settings-row">
+        <div class="settings-field">
+          <label for="set-provider">AI Provider</label>
+          <select id="set-provider">
+            <option value="">-- Select Provider --</option>
+            <option value="gemini">Google Gemini</option>
+            <option value="qwen">Qwen (via DashScope)</option>
+            <option value="kimi">Kimi (via Moonshot)</option>
+          </select>
+          <div class="hint">Choose your preferred AI model provider</div>
+        </div>
+
+        <div class="settings-field">
+          <label for="set-model">AI Model</label>
+          <input type="text" id="set-model" placeholder="e.g., gemini-2.5-flash or qwen3-max-2026-01-23" />
+          <div class="hint">Enter the model ID (e.g., gemini-2.5-flash, qwen3-max-2026-01-23)</div>
+          <div class="hint" id="model-capability-hint"></div>
+        </div>
+      </div>
+
+      <div id="gemini-fields">
+        <div class="settings-field">
+          <label for="set-api-key">Gemini API Key</label>
+          <div class="password-input-group">
+            <input type="password" id="set-api-key" placeholder="AIza..." autocomplete="off" />
+            <button type="button" class="password-toggle" data-for="set-api-key" title="Show/hide">👁</button>
+          </div>
+          <div class="hint">Required when using Google Gemini models</div>
+        </div>
+      </div>
+
+      <div id="qwen-fields" class="hidden">
+        <div class="settings-field">
+          <label for="set-qwen-api-key">Qwen API Key</label>
+          <div class="password-input-group">
+            <input type="password" id="set-qwen-api-key" placeholder="sk-..." autocomplete="off" />
+            <button type="button" class="password-toggle" data-for="set-qwen-api-key" title="Show/hide">👁</button>
+          </div>
+          <div class="hint">DashScope key for Qwen models</div>
+        </div>
+      </div>
+
+      <div id="kimi-fields" class="hidden">
+        <div class="settings-field">
+          <label for="set-kimi-api-key">Kimi API Key</label>
+          <div class="password-input-group">
+            <input type="password" id="set-kimi-api-key" placeholder="sk-..." autocomplete="off" />
+            <button type="button" class="password-toggle" data-for="set-kimi-api-key" title="Show/hide">👁</button>
+          </div>
+          <div class="hint">Moonshot API key for Kimi models (from https://platform.moonshot.cn)</div>
+        </div>
+      </div>
+
+      <div class="settings-field">
+        <label class="toggle-label">
+          <input type="checkbox" id="set-enable-search" />
+          <span>Enable Search Grounding</span>
+        </label>
+      </div>
+
+      <div class="settings-field">
+        <label class="toggle-label">
+          <input type="checkbox" id="set-enable-thinking" />
+          <span>Enable Thinking</span>
+        </label>
+      </div>
+
+      <div id="thinking-fields" class="hidden">
+        <div class="settings-field">
+          <label for="set-thinking-budget">Thinking Budget (tokens)</label>
+          <input type="number" id="set-thinking-budget" placeholder="8192" min="0" max="65536" step="1024" />
+          <div class="hint">Max tokens for internal reasoning. Leave empty for model default</div>
+        </div>
+        <div class="settings-field">
+          <label class="toggle-label">
+            <input type="checkbox" id="set-include-thoughts" />
+            <span>Include Thoughts in Response</span>
+          </label>
+          <div class="hint">Show the model's thinking process in the output</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SOUL & Skills -->
+    <div class="settings-group" id="settings-section-soul">
+      <div class="settings-group-title">Personality & Skills</div>
+
+      <div class="settings-field">
+        <label for="set-soul-preset">SOUL Source</label>
+        <select id="set-soul-preset">
+          <option value="">— None —</option>
+          <!-- Built-in SOULs are populated dynamically -->
+          <option value="__custom__">Use URL…</option>
+        </select>
+        <div class="hint">Choose a built-in personality or provide your own URL</div>
+      </div>
+
+      <div class="settings-field hidden" id="soul-url-field">
+        <label for="set-soul-url">SOUL URL</label>
+        <input type="url" id="set-soul-url" placeholder="https://raw.githubusercontent.com/you/repo/main/SOUL.md" />
+        <div class="hint">GitHub raw URL or Notion page URL</div>
+      </div>
+
+      <div class="settings-field">
+        <label for="set-notion-token">Notion Integration Token (optional)</label>
+        <div class="password-input-group">
+          <input type="password" id="set-notion-token" placeholder="ntn_..." autocomplete="off" />
+          <button type="button" class="password-toggle" data-for="set-notion-token" title="Show/hide">👁</button>
+        </div>
+        <div class="hint">Required only when loading private Notion SOUL/Skill URLs</div>
+      </div>
+
+      <div class="settings-field">
+        <label for="set-cors-proxy">CORS Proxy URL</label>
+        <input type="url" id="set-cors-proxy" placeholder="https://corsproxy.io/?url=" value="https://corsproxy.io/?url=" />
+        <div class="hint">Used for Notion API requests. Replace with your own proxy if needed</div>
+      </div>
+    </div>
+
+    <!-- Session Storage -->
+    <div class="settings-group" id="settings-section-storage">
+      <div class="settings-group-title">Encrypted Session Storage</div>
+
+      <div class="settings-field">
+        <label for="set-storage-backend">Storage Backend</label>
+        <select id="set-storage-backend">
+          <option value="local">Local (localStorage)</option>
+          <option value="github">GitHub Repository</option>
+          <option value="notion">Notion Page</option>
+        </select>
+      </div>
+
+      <!-- GitHub fields -->
+      <div id="github-fields" class="hidden">
+        <div class="settings-field">
+          <label for="set-github-token">GitHub Personal Access Token</label>
+          <div class="password-input-group">
+            <input type="password" id="set-github-token" placeholder="ghp_..." autocomplete="off" />
+            <button type="button" class="password-toggle" data-for="set-github-token" title="Show/hide">👁</button>
+          </div>
+          <div class="hint">Needs <code>repo</code> scope for private repos, or <code>public_repo</code> for public</div>
+        </div>
+        <div class="settings-field">
+          <label for="set-github-owner">Repository Owner</label>
+          <input type="text" id="set-github-owner" placeholder="your-username" />
+        </div>
+        <div class="settings-field">
+          <label for="set-github-repo">Repository Name</label>
+          <input type="text" id="set-github-repo" placeholder="my-agent-sessions" />
+        </div>
+        <div class="settings-field">
+          <label for="set-github-path">Sessions Directory</label>
+          <input type="text" id="set-github-path" placeholder="sessions" value="sessions" />
+        </div>
+        <div class="settings-field">
+          <button id="auto-create-repo-btn" class="btn-secondary" type="button">🚀 Auto-Create Repository</button>
+          <label class="toggle-label" style="margin-top:6px">
+            <input type="checkbox" id="set-repo-private" />
+            <span>Private repository</span>
+          </label>
+          <div class="hint">One-click: creates a repo and fills Owner / Repo fields. Sessions are AES-256 encrypted, public repos are fine</div>
+        </div>
+      </div>
+
+      <!-- Notion fields -->
+      <div id="notion-storage-fields" class="hidden">
+        <div class="settings-field">
+          <label for="set-notion-storage-token">Notion Integration Token</label>
+          <div class="password-input-group">
+            <input type="password" id="set-notion-storage-token" placeholder="ntn_..." autocomplete="off" />
+            <button type="button" class="password-toggle" data-for="set-notion-storage-token" title="Show/hide">👁</button>
+          </div>
+        </div>
+        <div class="settings-field">
+          <label for="set-notion-parent-page">Parent Page ID</label>
+          <input type="text" id="set-notion-parent-page" placeholder="32-char hex ID..." />
+          <div class="hint">Sessions will be created as child pages under this page</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Execution -->
+    <div class="settings-group" id="settings-section-exec">
+      <div class="settings-group-title">⚡ GitHub Actions Execution</div>
+
+      <div class="settings-field">
+        <label class="toggle-label">
+          <input type="checkbox" id="set-action-use-storage" checked />
+          <span>Use session storage repository</span>
+        </label>
+        <div class="hint">Reuse the GitHub repo configured for session storage</div>
+      </div>
+
+      <div id="action-custom-repo-fields" class="hidden">
+        <div class="settings-field">
+          <label for="set-action-token">GitHub Token</label>
+          <div class="password-input-group">
+            <input type="password" id="set-action-token" placeholder="ghp_..." autocomplete="off" />
+            <button type="button" class="password-toggle" data-for="set-action-token" title="Show/hide">👁</button>
+          </div>
+        </div>
+        <div class="settings-field">
+          <label for="set-action-owner">Repository Owner</label>
+          <input type="text" id="set-action-owner" placeholder="your-username" />
+        </div>
+        <div class="settings-field">
+          <label for="set-action-repo">Repository Name</label>
+          <input type="text" id="set-action-repo" placeholder="my-exec-repo" />
+        </div>
+        <div class="settings-field">
+          <button id="auto-create-action-repo-btn" class="btn-secondary" type="button">🚀 Auto-Create Action Repository</button>
+          <label class="toggle-label" style="margin-top:6px">
+            <input type="checkbox" id="set-action-repo-private" />
+            <span>Private repository</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="settings-field">
+        <label for="set-action-branch">Branch</label>
+        <input type="text" id="set-action-branch" placeholder="main" value="main" />
+      </div>
+
+      <div class="settings-field">
+        <label for="set-action-workflow">Workflow File</label>
+        <input type="text" id="set-action-workflow" placeholder="execute.yml" value="execute.yml" />
+        <div class="hint">Filename under <code>.github/workflows/</code>. Auto-created if missing</div>
+      </div>
+
+      <div class="settings-field">
+        <label for="set-action-dir">Artifacts Directory</label>
+        <input type="text" id="set-action-dir" placeholder="artifacts" value="artifacts" />
+        <div class="hint">Directory in the repo where code artifacts are pushed</div>
+      </div>
+
+    </div>
+
+    <!-- Loop Agent (Upstash) -->
+    <div class="settings-group" id="settings-section-loop">
+      <div class="settings-group-title">🔄 Loop Agent</div>
+
+      <div class="settings-field">
+        <label for="set-upstash-url">Upstash Redis REST URL</label>
+        <input type="url" id="set-upstash-url" placeholder="https://your-redis.upstash.io" />
+        <div class="hint">REST API URL from <a href="https://console.upstash.com" target="_blank">Upstash Console</a></div>
+      </div>
+
+      <div class="settings-field">
+        <label for="set-upstash-token">Upstash Redis REST Token</label>
+        <div class="password-input-group">
+          <input type="password" id="set-upstash-token" placeholder="AXxx..." autocomplete="off" />
+          <button type="button" class="password-toggle" data-for="set-upstash-token" title="Show/hide">👁</button>
+        </div>
+        <div class="hint">REST token from Upstash Console. Used for message passing with the loop agent</div>
+      </div>
+
+      <div class="settings-field">
+        <button id="test-upstash-btn" class="btn-secondary" type="button">🔗 Test Upstash Connection</button>
+        <span id="upstash-test-result" style="font-size:12px;margin-left:8px;"></span>
+      </div>
+    </div>
+
+    <div class="settings-group" id="settings-section-notify">
+      <div class="settings-group-title">🔔 Notifications</div>
+      
+      <!-- Pushoo Notifications (Primary) -->
+      <div class="settings-field">
+        <label>Pushoo Notifications <span id="pushoo-status-badge" style="font-size:12px;color:#888"></span></label>
+        <button id="pushoo-config-btn" class="btn-secondary" type="button">⚙️ Configure Pushoo</button>
+        <div class="hint">Send workflow completion notifications to multiple platforms (WeChat, Telegram, DingTalk, Discord, etc.) — <a href="https://pushoo.js.org/" target="_blank">View Pushoo docs →</a></div>
+      </div>
+
+      <!-- Resend Email Notifications (Collapsible) -->
+      <div class="collapsible-section">
+        <button class="collapsible-header" type="button">
+          <span class="collapsible-toggle">▶</span>
+          <span>Email Notifications (Resend)</span>
+        </button>
+        <div class="collapsible-body">
+          <div class="settings-field">
+            <label for="set-resend-api-key">Resend API Key</label>
+            <div class="password-input-group">
+              <input type="password" id="set-resend-api-key" placeholder="re_..." autocomplete="off" />
+              <button type="button" class="password-toggle" data-for="set-resend-api-key" title="Show/hide">👁</button>
+            </div>
+            <div class="hint">Free at <a href="https://resend.com" target="_blank">resend.com</a> — 100 emails/day, no credit card</div>
+          </div>
+          <div class="settings-field">
+            <label for="set-notify-email">Default Notification Email</label>
+            <input type="email" id="set-notify-email" placeholder="you@example.com" />
+            <div class="hint">Used by GitHub Actions Scheduler skill for task completion emails</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="settings-footer">
+    <button id="reload-soul-btn">↻ Reload SOUL</button>
+    <button id="apply-settings">Save & Apply</button>
+  </div>
+</div>
+
+<!-- ═══ Restore Sessions Dialog ═══ -->
+<div id="restore-dialog" class="hidden">
+  <div class="restore-card">
+    <h3>⬇ Restore Sessions from GitHub</h3>
+    <p>Enter your GitHub credentials to restore sessions stored in a repository.</p>
+    <div class="restore-fields">
+      <div class="password-input-group">
+        <input type="password" id="restore-github-token" placeholder="GitHub Personal Access Token (ghp_...)" autocomplete="off" />
+        <button type="button" class="password-toggle" data-for="restore-github-token" title="Show/hide">👁</button>
+      </div>
+      <input type="text" id="restore-github-owner" placeholder="Repository Owner (username)" />
+      <input type="text" id="restore-github-repo" placeholder="Repository Name" />
+      <input type="text" id="restore-github-path" placeholder="Sessions directory (default: sessions)" />
+    </div>
+    <div id="restore-status" class="restore-status hidden"></div>
+    <div class="restore-actions">
+      <button id="restore-cancel">Cancel</button>
+      <button id="restore-submit">Restore</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Passphrase Dialog (for decrypting saved sessions) ═══ -->
+<div id="passphrase-dialog" class="hidden">
+  <div class="passphrase-card">
+    <h3>🔐 Decrypt Session</h3>
+    <p id="passphrase-message">Enter the passphrase to decrypt this session.</p>
+    <div class="password-input-group" style="margin-bottom:8px">
+      <input type="password" id="passphrase-input" placeholder="Enter passphrase…" autocomplete="off" />
+      <button type="button" class="password-toggle" data-for="passphrase-input" title="Show/hide">👁</button>
+    </div>
+    <div class="passphrase-actions">
+      <button id="passphrase-cancel">Cancel</button>
+      <button id="passphrase-submit">Decrypt</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Pushoo Configuration Dialog ═══ -->
+<div id="pushoo-config-dialog" class="hidden">
+  <div class="modal-overlay">
+    <div class="modal-content" style="max-width:480px">
+      <div class="modal-header">
+        <h2>📢 Pushoo Notifications</h2>
+        <button class="modal-close" id="pushoo-config-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin:0 0 12px;color:#777;font-size:13px">Receive scheduled task results via push notification.
+          <a href="https://pushoo.js.org/" target="_blank">Pushoo docs →</a></p>
+
+        <div class="settings-field" style="margin-bottom:12px;">
+          <label for="pushoo-platform">Platform</label>
+          <select id="pushoo-platform" class="schedule-input" style="width:100%">
+            <!-- populated by JS -->
+          </select>
+        </div>
+
+        <div class="settings-field" style="margin-bottom:8px">
+          <label for="pushoo-token">Token / Key</label>
+          <div class="password-input-group">
+            <input type="password" id="pushoo-token" placeholder="..." autocomplete="off" />
+            <button type="button" class="password-toggle" data-for="pushoo-token" title="Show/hide">👁</button>
+          </div>
+          <div class="hint" id="pushoo-token-hint" style="margin-top:4px"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="pushoo-config-cancel" class="btn-secondary">Cancel</button>
+        <button id="pushoo-config-save" class="btn-primary">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Toast Container ═══ -->
+<div id="toast-container"></div>
+
+<!-- ═══ App Entry Point ═══ -->
+
+</body>
+</html>

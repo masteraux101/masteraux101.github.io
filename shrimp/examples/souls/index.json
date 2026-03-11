@@ -1,0 +1,8 @@
+[
+  { "name": "BrowserAgent Assistant (Default)", "file": "DEFAULT_SOUL.txt", "icon": "🧠", "description": "A balanced, helpful AI assistant" },
+  { "name": "Life Coach · 理性工程导师",          "file": "GUIDE_SOUL.txt",    "icon": "🧭", "description": "Rational engineering mindset for life decisions" },
+  { "name": "Code Architect",                    "file": "CODER_SOUL.txt",   "icon": "💻", "description": "Expert software engineer — clean code, systems thinking" },
+  { "name": "Creative Writer",                   "file": "WRITER_SOUL.txt",  "icon": "✍️", "description": "Versatile writing partner — fiction, copy, editing" },
+  { "name": "Data Analyst",                      "file": "DATA_SOUL.txt",    "icon": "📊", "description": "Turn messy data into clear, actionable insights" },
+  { "name": "Learning Tutor",                    "file": "TUTOR_SOUL.txt",   "icon": "🎓", "description": "Patient teaching with adaptive explanations" }
+]
