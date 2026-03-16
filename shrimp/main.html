@@ -7,8 +7,8 @@
   <meta name="description" content="A fully browser-based multi-provider AI workspace with SOUL personality customization, Skill system, encrypted storage, and GitHub Actions execution." />
 
   <!-- App styles -->
-  <script type="module" crossorigin src="/shrimp/assets/index-CKPlyGCS.js"></script>
-  <link rel="stylesheet" crossorigin href="/shrimp/assets/index-CdLzsErO.css">
+  <script type="module" crossorigin src="/shrimp/assets/index-W_DlAYYx.js"></script>
+  <link rel="stylesheet" crossorigin href="/shrimp/assets/index-DbSr99tD.css">
 </head>
 <body>
 
@@ -46,17 +46,26 @@
 
     <!-- Input Area -->
     <div class="quick-actions" id="quick-actions">
+      <button class="quick-action-btn quick-action-primary" id="quick-btn-loop" data-cmd="/loop" title="Loop Agent">🔄 Loop</button>
       <button class="quick-action-btn" id="quick-btn-skills" data-cmd="/skills" title="Manage skills">🧩 Skills</button>
       <button class="quick-action-btn" id="quick-btn-souls" data-cmd="/soul list" title="Browse SOULs">🧠 Souls</button>
-      <button class="quick-action-btn" id="quick-btn-schedule" data-cmd="/schedule" title="Create scheduled task">⏰ Schedule</button>
       <button class="quick-action-btn" id="quick-btn-compact" data-cmd="/compact" title="Compress context">📦 Compact</button>
-      <button class="quick-action-btn" id="quick-btn-loop" data-cmd="/loop" title="Loop Agent">🔄 Loop</button>
+    </div>
+    <div id="loop-connect-banner" class="hidden" style="display:none;align-items:center;justify-content:space-between;padding:6px 14px;background:linear-gradient(90deg,#1a3a2a,#0d1f17);border:1px solid #22863a;border-radius:8px;font-size:13px;color:#4ae168;margin:0 24px 4px;">
+      <span>🔄 Connected to Loop Agent: <strong id="loop-connect-key"></strong></span>
+      <button id="loop-disconnect-btn" style="background:none;border:1px solid #4ae168;color:#4ae168;border-radius:4px;padding:2px 10px;cursor:pointer;font-size:12px;" title="Disconnect from loop agent">✕ Disconnect</button>
+    </div>
+    <div id="loop-status-panel" class="hidden" style="display:none;padding:8px 14px;background:linear-gradient(90deg,#1a2a3a,#0d1720);border:1px solid #2d6a9f;border-radius:8px;font-size:12px;color:#8ec5fc;margin:0 24px 4px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <span style="font-weight:600;">🔄 Loop Agent Dashboard</span>
+        <div style="display:flex;gap:6px;">
+          <button id="loop-panel-refresh" style="background:none;border:1px solid #8ec5fc;color:#8ec5fc;border-radius:4px;padding:1px 8px;cursor:pointer;font-size:11px;" title="Refresh status">↻</button>
+          <button id="loop-panel-close" style="background:none;border:1px solid #8ec5fc;color:#8ec5fc;border-radius:4px;padding:1px 8px;cursor:pointer;font-size:11px;" title="Close panel">✕</button>
+        </div>
+      </div>
+      <div id="loop-status-content" style="display:flex;flex-wrap:wrap;gap:8px 16px;"></div>
     </div>
     <div class="input-area">
-      <div id="loop-context-banner" class="loop-context-banner hidden">
-        <span id="loop-context-label">🔄 Loop mode: <strong id="loop-context-key"></strong></span>
-        <button id="loop-context-exit" title="Exit loop mode">✕</button>
-      </div>
       <div id="slash-autocomplete" class="hidden"></div>
       <textarea
         id="message-input"
@@ -103,6 +112,7 @@
             <option value="gemini">Google Gemini</option>
             <option value="qwen">Qwen (via DashScope)</option>
             <option value="kimi">Kimi (via Moonshot)</option>
+            <option value="openai">OpenAI Compatible</option>
           </select>
           <div class="hint">Choose your preferred AI model provider</div>
         </div>
@@ -145,6 +155,22 @@
             <button type="button" class="password-toggle" data-for="set-kimi-api-key" title="Show/hide">👁</button>
           </div>
           <div class="hint">Moonshot API key for Kimi models (from https://platform.moonshot.cn)</div>
+        </div>
+      </div>
+
+      <div id="openai-fields" class="hidden">
+        <div class="settings-field">
+          <label for="set-openai-base-url">Base URL</label>
+          <input type="url" id="set-openai-base-url" placeholder="https://api.openai.com/v1" autocomplete="off" />
+          <div class="hint">OpenAI-compatible API base URL (e.g. https://api.openai.com/v1, https://api.deepseek.com/v1)</div>
+        </div>
+        <div class="settings-field">
+          <label for="set-openai-api-key">API Key</label>
+          <div class="password-input-group">
+            <input type="password" id="set-openai-api-key" placeholder="sk-..." autocomplete="off" />
+            <button type="button" class="password-toggle" data-for="set-openai-api-key" title="Show/hide">👁</button>
+          </div>
+          <div class="hint">API key for the OpenAI-compatible endpoint</div>
         </div>
       </div>
 
@@ -332,62 +358,40 @@
 
     </div>
 
-    <!-- Loop Agent (Upstash) -->
+    <!-- Loop Agent -->
     <div class="settings-group" id="settings-section-loop">
       <div class="settings-group-title">🔄 Loop Agent</div>
+      <div class="hint" style="margin:4px 0 8px;">Loop Agent requires a messaging channel (e.g. Telegram) configured in Notifications below. Upstash is optional for real-time browser intervention.</div>
 
-      <div class="settings-field">
-        <label for="set-upstash-url">Upstash Redis REST URL</label>
-        <input type="url" id="set-upstash-url" placeholder="https://your-redis.upstash.io" />
-        <div class="hint">REST API URL from <a href="https://console.upstash.com" target="_blank">Upstash Console</a></div>
-      </div>
-
-      <div class="settings-field">
-        <label for="set-upstash-token">Upstash Redis REST Token</label>
-        <div class="password-input-group">
-          <input type="password" id="set-upstash-token" placeholder="AXxx..." autocomplete="off" />
-          <button type="button" class="password-toggle" data-for="set-upstash-token" title="Show/hide">👁</button>
+      <div class="collapsible-section">
+        <button class="collapsible-header" type="button">
+          <span class="collapsible-toggle">▶</span>
+          <span>Upstash Redis (Optional — for browser intervention)</span>
+        </button>
+        <div class="collapsible-body">
+          <div class="settings-field">
+            <label for="set-upstash-url">Upstash Redis REST URL</label>
+            <input id="set-upstash-url" type="text" placeholder="https://xxxx.upstash.io" autocomplete="off" />
+            <div class="hint">Optional. Enables real-time browser ↔ agent communication via <code>/loop send</code>. Without this, repo-based polling is used as fallback.</div>
+          </div>
+          <div class="settings-field">
+            <label for="set-upstash-token">Upstash REST Token</label>
+            <div class="password-input-group">
+              <input id="set-upstash-token" type="password" autocomplete="off" />
+            </div>
+          </div>
         </div>
-        <div class="hint">REST token from Upstash Console. Used for message passing with the loop agent</div>
-      </div>
-
-      <div class="settings-field">
-        <button id="test-upstash-btn" class="btn-secondary" type="button">🔗 Test Upstash Connection</button>
-        <span id="upstash-test-result" style="font-size:12px;margin-left:8px;"></span>
       </div>
     </div>
 
     <div class="settings-group" id="settings-section-notify">
       <div class="settings-group-title">🔔 Notifications</div>
       
-      <!-- Pushoo Notifications (Primary) -->
+      <!-- Notification Channels (Pushoo + special platforms) -->
       <div class="settings-field">
-        <label>Pushoo Notifications <span id="pushoo-status-badge" style="font-size:12px;color:#888"></span></label>
-        <button id="pushoo-config-btn" class="btn-secondary" type="button">⚙️ Configure Pushoo</button>
+        <label>Notification Channels <span id="pushoo-status-badge" style="font-size:12px;color:#888"></span></label>
+        <button id="pushoo-config-btn" class="btn-secondary" type="button">⚙️ Configure Channels</button>
         <div class="hint">Send workflow completion notifications to multiple platforms (WeChat, Telegram, DingTalk, Discord, etc.) — <a href="https://pushoo.js.org/" target="_blank">View Pushoo docs →</a></div>
-      </div>
-
-      <!-- Resend Email Notifications (Collapsible) -->
-      <div class="collapsible-section">
-        <button class="collapsible-header" type="button">
-          <span class="collapsible-toggle">▶</span>
-          <span>Email Notifications (Resend)</span>
-        </button>
-        <div class="collapsible-body">
-          <div class="settings-field">
-            <label for="set-resend-api-key">Resend API Key</label>
-            <div class="password-input-group">
-              <input type="password" id="set-resend-api-key" placeholder="re_..." autocomplete="off" />
-              <button type="button" class="password-toggle" data-for="set-resend-api-key" title="Show/hide">👁</button>
-            </div>
-            <div class="hint">Free at <a href="https://resend.com" target="_blank">resend.com</a> — 100 emails/day, no credit card</div>
-          </div>
-          <div class="settings-field">
-            <label for="set-notify-email">Default Notification Email</label>
-            <input type="email" id="set-notify-email" placeholder="you@example.com" />
-            <div class="hint">Used by GitHub Actions Scheduler skill for task completion emails</div>
-          </div>
-        </div>
       </div>
     </div>
 
@@ -440,30 +444,20 @@
 <!-- ═══ Pushoo Configuration Dialog ═══ -->
 <div id="pushoo-config-dialog" class="hidden">
   <div class="modal-overlay">
-    <div class="modal-content" style="max-width:480px">
+    <div class="modal-content" style="max-width:540px">
       <div class="modal-header">
-        <h2>📢 Pushoo Notifications</h2>
+        <h2>📢 Notification Channels</h2>
         <button class="modal-close" id="pushoo-config-close">&times;</button>
       </div>
       <div class="modal-body">
-        <p style="margin:0 0 12px;color:#777;font-size:13px">Receive scheduled task results via push notification.
+        <p style="margin:0 0 12px;color:#777;font-size:13px">Configure one or more notification channels. Telegram and WeCom Bot use native SDKs for bidirectional messaging.
           <a href="https://pushoo.js.org/" target="_blank">Pushoo docs →</a></p>
 
-        <div class="settings-field" style="margin-bottom:12px;">
-          <label for="pushoo-platform">Platform</label>
-          <select id="pushoo-platform" class="schedule-input" style="width:100%">
-            <!-- populated by JS -->
-          </select>
+        <div id="pushoo-channels-list" style="display:flex;flex-direction:column;gap:12px;">
+          <!-- Channel rows dynamically generated by JS -->
         </div>
 
-        <div class="settings-field" style="margin-bottom:8px">
-          <label for="pushoo-token">Token / Key</label>
-          <div class="password-input-group">
-            <input type="password" id="pushoo-token" placeholder="..." autocomplete="off" />
-            <button type="button" class="password-toggle" data-for="pushoo-token" title="Show/hide">👁</button>
-          </div>
-          <div class="hint" id="pushoo-token-hint" style="margin-top:4px"></div>
-        </div>
+        <button id="pushoo-add-channel" type="button" class="btn-secondary" style="margin-top:12px;width:100%;padding:8px;font-size:14px;">➕ Add Channel</button>
       </div>
       <div class="modal-footer">
         <button id="pushoo-config-cancel" class="btn-secondary">Cancel</button>
