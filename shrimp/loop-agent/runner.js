@@ -26,12 +26,12 @@
  *   PUSHOO_CHANNELS   — JSON array of {platform, token} for multi-channel notifications
  *                        (legacy: PUSHOO_PLATFORM + PUSHOO_TOKEN still supported as fallback)
  *   GITHUB_TOKEN      — GitHub PAT for repo operations
- *   GITHUB_REPOSITORY — owner/repo (auto-set by Actions)
+ *   GITHUB_REPOSITORY — owner/repo of the session repo where GHA runs
+ *   LOOP_DATA_REPOSITORY — owner/repo of private loop data repo (history/state/memory/artifacts)
  *   LOOP_HISTORY_PATH — Path in repo for history file (default: loop-agent/history)
  *   LOOP_POLL_INTERVAL— Polling interval in seconds (default: 5)
  *   LOOP_SYSTEM_PROMPT— Optional system prompt for the agent
  *   LOOP_MAX_RUNTIME  — Max runtime in seconds (default: 18000 = 5h)
- *   LOOP_ENCRYPT_KEY  — Optional passphrase for encrypting repo files (AES-256-GCM)
  */
 
 // ─── Upstash Redis REST client ──────────────────────────────────────
@@ -83,10 +83,7 @@ class UpstashClient {
   }
 }
 
-// ─── File Encryption (AES-256-GCM, PBKDF2) ────────────────────────
-//
-// Format: "ENCRYPTED:" + base64( salt(16) + iv(12) + ciphertext + authTag(16) )
-// Compatible with the browser's Web Crypto implementation in crypto.js.
+// ─── File Encoding Helpers (legacy-compatible) ─────────────────────
 
 const nodeCrypto = require('crypto');
 
@@ -126,13 +123,12 @@ function decryptContent(passphrase, blob) {
 // ─── GitHub Repo Operations ─────────────────────────────────────────
 
 class RepoStore {
-  constructor(token, repository, encryptKey = null) {
+  constructor(token, repository) {
     this.token = token;
     const [owner, repo] = repository.split('/');
     this.owner = owner;
     this.repo = repo;
     this.api = 'https://api.github.com';
-    this._encryptKey = encryptKey || null;
   }
 
   _headers() {
@@ -151,26 +147,16 @@ class RepoStore {
     if (resp.status === 404) return null;
     if (!resp.ok) throw new Error(`GitHub read error: ${resp.status}`);
     const data = await resp.json();
-    let content = Buffer.from(data.content, 'base64').toString('utf-8');
-    // Decrypt if encrypted and key is available
-    if (this._encryptKey && content.startsWith(ENC_PREFIX)) {
-      try {
-        content = decryptContent(this._encryptKey, content);
-      } catch (e) {
-        console.warn(`[RepoStore] Decrypt failed for ${path}: ${e.message}`);
-      }
-    }
+    const content = Buffer.from(data.content, 'base64').toString('utf-8');
     return { content, sha: data.sha };
   }
 
   async writeFile(path, content, message, branch = 'main') {
     // Get existing file SHA if it exists (for updates)
     const existing = await this.readFile(path, branch);
-    // Encrypt content if key is set
-    const finalContent = this._encryptKey ? encryptContent(this._encryptKey, content) : content;
     const body = {
       message,
-      content: Buffer.from(finalContent).toString('base64'),
+      content: Buffer.from(content).toString('base64'),
       branch,
     };
     if (existing) body.sha = existing.sha;
@@ -187,8 +173,7 @@ class RepoStore {
   }
 
   /**
-   * Write a file WITHOUT encryption, even if _encryptKey is set.
-   * Use this for files that must remain plain text (e.g. workflow YAML, executable scripts).
+  * Write a file as plain text.
    */
   async writeFileRaw(path, content, message, branch = 'main') {
     const existing = await this.readFile(path, branch);
@@ -297,6 +282,124 @@ async function sendNotifications(channels, title, content) {
     } catch (e) {
       console.warn(`[Notify] ${ch.platform} failed: ${e.message}`);
     }
+  }
+}
+
+const SUPPORTED_CHANNEL_PLATFORMS = new Set([
+  'telegram', 'wecombot', 'discord', 'dingtalk', 'feishu',
+  'serverchan', 'pushplus', 'wecom', 'bark', 'webhook',
+]);
+
+function normalizePlatformName(name) {
+  const raw = String(name || '').trim().toLowerCase();
+  const alias = {
+    tg: 'telegram',
+    wx: 'wecombot',
+    wecom: 'wecombot',
+    wxwork: 'wecombot',
+    '企业微信': 'wecombot',
+  };
+  return alias[raw] || raw;
+}
+
+function isBidirectionalPlatform(platform) {
+  return platform === 'telegram' || platform === 'wecombot';
+}
+
+function maskToken(token) {
+  const s = String(token || '');
+  if (s.length <= 8) return s ? `${s.slice(0, 2)}***` : '(empty)';
+  return `${s.slice(0, 4)}***${s.slice(-4)}`;
+}
+
+function findChannel(channels, platform) {
+  if (!Array.isArray(channels)) return null;
+  return channels.find(ch => normalizePlatformName(ch.platform) === platform) || null;
+}
+
+function upsertChannel(channels, platform, token) {
+  const normalized = normalizePlatformName(platform);
+  if (!SUPPORTED_CHANNEL_PLATFORMS.has(normalized)) {
+    throw new Error(`Unsupported platform: ${platform}`);
+  }
+  const idx = channels.findIndex(ch => normalizePlatformName(ch.platform) === normalized);
+  const next = { platform: normalized, token: String(token || '').trim() };
+  if (!next.token) throw new Error(`Empty token for ${normalized}`);
+  if (idx >= 0) {
+    channels[idx] = next;
+  } else {
+    channels.push(next);
+  }
+  return next;
+}
+
+function parseDeliveryDirective(text) {
+  const raw = String(text || '');
+  const patterns = [
+    /(?:通过|经由|用|via|using)\s*([a-zA-Z\u4e00-\u9fa5]+)\s*(?:渠道|channel)?(?:下发|发送|通知|deliver|send)?/i,
+    /(?:把结果|结果)(?:.{0,16}?)(?:通过|via|using)\s*([a-zA-Z\u4e00-\u9fa5]+)\s*(?:渠道|channel)?/i,
+    /(?:send|deliver)(?:.{0,20}?)(?:via|through)\s+([a-zA-Z\u4e00-\u9fa5]+)/i,
+  ];
+
+  let matched = null;
+  for (const p of patterns) {
+    const m = raw.match(p);
+    if (m) {
+      matched = { platform: normalizePlatformName(m[1]), phrase: m[0] };
+      break;
+    }
+  }
+  if (!matched || !SUPPORTED_CHANNEL_PLATFORMS.has(matched.platform)) return null;
+
+  const tokenRegex = new RegExp(
+    `${matched.platform}\\s*(?:token|key|密钥|令牌)?\\s*[:：=]\\s*([^\\s]+)`,
+    'i'
+  );
+  const genericTokenRegex = /(?:token|key|密钥|令牌)\s*[:：=]\s*([^\s]+)/i;
+  const tokenMatch = raw.match(tokenRegex) || raw.match(genericTokenRegex);
+
+  const cleaned = raw
+    .replace(matched.phrase, ' ')
+    .replace(tokenRegex, ' ')
+    .replace(genericTokenRegex, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return {
+    platform: matched.platform,
+    token: tokenMatch ? tokenMatch[1].trim() : '',
+    cleanedText: cleaned,
+  };
+}
+
+async function loadRuntimeChannels(repoStore, loopKey) {
+  if (!repoStore || !loopKey) return [];
+  const path = `loop-agent/channel/${loopKey}.channels.json`;
+  try {
+    const file = await repoStore.readFile(path);
+    if (!file) return [];
+    const parsed = JSON.parse(file.content);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map(ch => ({
+        platform: normalizePlatformName(ch.platform),
+        token: String(ch.token || '').trim(),
+      }))
+      .filter(ch => SUPPORTED_CHANNEL_PLATFORMS.has(ch.platform) && ch.token);
+  } catch (e) {
+    console.warn(`[Channel] Failed to load runtime channels: ${e.message}`);
+    return [];
+  }
+}
+
+async function persistRuntimeChannels(repoStore, loopKey, channels) {
+  if (!repoStore || !loopKey || !Array.isArray(channels)) return;
+  const path = `loop-agent/channel/${loopKey}.channels.json`;
+  const content = JSON.stringify(channels, null, 2);
+  try {
+    await repoStore.writeFileRaw(path, content, '[loop-agent] Update runtime channels');
+  } catch (e) {
+    console.warn(`[Channel] Failed to persist runtime channels: ${e.message}`);
   }
 }
 
@@ -553,6 +656,132 @@ async function sendImageToActiveChannel(imagePath, caption) {
   return sendTelegramPhoto(imagePath, caption);
 }
 
+function resolveModelProvider(provider, model) {
+  const normalizedProvider = String(provider || '').toLowerCase();
+  const normalizedModel = String(model || '').toLowerCase();
+  // GLM is consumed via OpenAI-compatible endpoint with AI_BASE_URL.
+  if (normalizedModel.startsWith('glm') || normalizedModel.startsWith('chatglm')) return 'openai';
+  if (normalizedProvider === 'openai') {
+    if (normalizedModel.startsWith('kimi') || normalizedModel.startsWith('moonshot')) return 'kimi';
+    if (normalizedModel.startsWith('qwen') || normalizedModel.startsWith('qwq')) return 'qwen';
+  }
+  return normalizedProvider;
+}
+
+function isGlmModel(model) {
+  return String(model || '').toLowerCase().startsWith('glm-');
+}
+
+function getImageMimeType(format) {
+  const normalized = String(format || '').toLowerCase();
+  if (normalized === 'jpg' || normalized === 'jpeg') return 'image/jpeg';
+  if (normalized === 'webp') return 'image/webp';
+  if (normalized === 'gif') return 'image/gif';
+  return 'image/png';
+}
+
+function extractAssistantText(content) {
+  if (!content) return '';
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map(part => {
+        if (typeof part === 'string') return part;
+        if (part?.type === 'text') return part.text || '';
+        return part?.text || '';
+      })
+      .filter(Boolean)
+      .join('\n');
+  }
+  return String(content);
+}
+
+function buildVisionDataUrl(base64Data, mimeType) {
+  return `data:${mimeType};base64,${base64Data}`;
+}
+
+function buildVisionRequest(provider, model, promptText, mimeType, base64Data) {
+  const resolvedProvider = resolveModelProvider(provider, model);
+  const dataUrl = buildVisionDataUrl(base64Data, mimeType);
+  const userContent = [
+    {
+      type: 'image_url',
+      image_url: { url: dataUrl },
+    },
+    {
+      type: 'text',
+      text: promptText,
+    },
+  ];
+
+  if (resolvedProvider === 'gemini') {
+    return {
+      provider: resolvedProvider,
+      endpoint: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+      body: {
+        contents: [{ parts: [
+          { text: promptText },
+          { inline_data: { mime_type: mimeType, data: base64Data } },
+        ] }],
+      },
+      headers: { 'Content-Type': 'application/json' },
+      queryKey: 'key',
+      responseParser(data) {
+        return data.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
+      },
+    };
+  }
+
+  const baseURLMap = {
+    qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    kimi: 'https://api.moonshot.cn/v1',
+    openai: 'https://api.openai.com/v1',
+  };
+  const baseUrl = process.env.AI_BASE_URL || baseURLMap[resolvedProvider] || baseURLMap.openai;
+
+  const body = {
+    model,
+    messages: [{ role: 'user', content: userContent }],
+  };
+
+  return {
+    provider: resolvedProvider,
+    endpoint: `${baseUrl.replace(/\/+$/, '')}/chat/completions`,
+    body,
+    headers: {
+      Authorization: `Bearer ${process.env.AI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    responseParser(data) {
+      return extractAssistantText(data.choices?.[0]?.message?.content) || '';
+    },
+  };
+}
+
+async function requestVisionCompletion({ provider, model, apiKey, promptText, mimeType, base64Data }) {
+  const request = buildVisionRequest(provider, model, promptText, mimeType, base64Data);
+  const url = request.queryKey
+    ? `${request.endpoint}?${request.queryKey}=${encodeURIComponent(apiKey)}`
+    : request.endpoint;
+  const headers = request.queryKey
+    ? request.headers
+    : { ...request.headers, Authorization: `Bearer ${apiKey}` };
+
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(request.body),
+  });
+
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`Vision API error (${resp.status}): ${err.slice(0, 500)}`);
+  }
+
+  const data = await resp.json();
+  return request.responseParser(data);
+}
+
 // ─── Self-Restart (Workflow Re-dispatch) ────────────────────────────
 
 /**
@@ -596,7 +825,7 @@ async function selfRestart() {
 
 // ─── Built-in Tools ─────────────────────────────────────────────────
 
-function createBuiltinTools(repoStore, llm, notifyFn) {
+function createBuiltinTools(repoStore, llm, notifyFn, memoryStore = null) {
   const { tool } = require('@langchain/core/tools');
   const { z } = require('zod');
 
@@ -767,27 +996,29 @@ function createBuiltinTools(repoStore, llm, notifyFn) {
     }));
 
     // 6. Write Repo File — write/update a file in the GitHub repository
-    //    Workflow YAML files must stay plain text so GitHub Actions can read them.
-    const PLAIN_TEXT_PATTERNS = [
-      /^\.github\/workflows\/.+\.ya?ml$/,      // GHA workflow definitions
-    ];
-    function shouldSkipEncryption(filePath) {
-      return PLAIN_TEXT_PATTERNS.some(re => re.test(filePath));
+    // Files are always stored as plain text in the loop data repository.
+    function normalizeRepoWritePath(filePath) {
+      const normalized = String(filePath || '').replace(/^\/+/, '');
+      if (!normalized) return '';
+      if (normalized.startsWith('.github/')) return normalized;
+      if (normalized.startsWith('artifact/')) return normalized;
+      return `artifact/${normalized}`;
     }
     tools.push(tool(async ({ path, content, message }) => {
       try {
-        if (shouldSkipEncryption(path)) {
-          await repoStore.writeFileRaw(path, content, message || `[loop-agent] Update ${path}`);
-        } else {
-          await repoStore.writeFile(path, content, message || `[loop-agent] Update ${path}`);
-        }
-        return `Successfully wrote ${content.length} chars to ${path}`;
+        const finalPath = normalizeRepoWritePath(path);
+        if (!finalPath) return 'Write failed: path must not be empty';
+        await repoStore.writeFileRaw(finalPath, content, message || `[loop-agent] Update ${finalPath}`);
+        const artifactUrl = registerArtifactPath(finalPath);
+        return artifactUrl
+          ? `Successfully wrote ${content.length} chars to ${finalPath}\nArtifact URL: ${artifactUrl}`
+          : `Successfully wrote ${content.length} chars to ${finalPath}`;
       } catch (e) {
         return `Write failed: ${e.message}`;
       }
     }, {
       name: 'write_repo_file',
-      description: 'Write or update a file in the GitHub repository. Workflow YAML files (.github/workflows/*.yml) are always stored as plain text; all other files are encrypted if an encryption key is configured.',
+      description: 'Write or update a file in the private loop data repository. Non-.github paths are automatically normalized under artifact/. Files in artifact/ and workflow YAML files are always stored as plain text.',
       schema: z.object({
         path: z.string().describe('File path relative to repo root'),
         content: z.string().describe('File content to write'),
@@ -795,59 +1026,82 @@ function createBuiltinTools(repoStore, llm, notifyFn) {
       }),
     }));
 
-    // 7. Save to Memory — persist information to MEMORY.md in the repo
+    // 7. remember — JSON memory persistence (key/value with upsert)
     tools.push(tool(async ({ key, value }) => {
+      if (!memoryStore) return 'Memory backend unavailable.';
       try {
-        const memPath = 'loop-agent/MEMORY.md';
-        let content = '';
-        const existing = await repoStore.readFile(memPath);
-        if (existing) {
-          content = existing.content;
-        } else {
-          content = '# Agent Memory\n\n';
-        }
-        const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const sectionRegex = new RegExp(`## ${escaped}\\n[\\s\\S]*?(?=\\n## |$)`);
-        if (sectionRegex.test(content)) {
-          content = content.replace(sectionRegex, `## ${key}\n${value}`);
-        } else {
-          content += `\n## ${key}\n${value}\n`;
-        }
-        await repoStore.writeFile(memPath, content, `[loop-agent] Update memory: ${key}`);
+        await memoryStore.remember(key, value);
+        return `Remembered: ${key} = ${value}`;
+      } catch (e) {
+        return `Failed to remember: ${e.message}`;
+      }
+    }, {
+      name: 'remember',
+      description: 'Save a memory entry into persistent JSON memory. Upserts by key and stores timestamp.',
+      schema: z.object({
+        key: z.string().describe('Memory key, e.g. user_name or preferred_language'),
+        value: z.string().describe('Memory value to store for this key'),
+      }),
+    }));
+
+    // 8. recall — case-insensitive substring search on key/value
+    tools.push(tool(async ({ query }) => {
+      if (!memoryStore) return 'Memory backend unavailable.';
+      try {
+        const matches = await memoryStore.recall(query);
+        if (matches.length === 0) return 'No related memory found.';
+        return matches
+          .map((m, idx) => `${idx + 1}. ${m.key}: ${m.value}`)
+          .join('\n');
+      } catch (e) {
+        return `Failed to recall: ${e.message}`;
+      }
+    }, {
+      name: 'recall',
+      description: 'Search persistent JSON memory by keyword. Matches both key and value, case-insensitive.',
+      schema: z.object({
+        query: z.string().describe('Keyword to search in memory key/value'),
+      }),
+    }));
+
+    // Backward-compatible aliases for existing prompts/flows.
+    tools.push(tool(async ({ key, value }) => {
+      if (!memoryStore) return 'Memory backend unavailable.';
+      try {
+        await memoryStore.remember(key, value);
         return `Memory saved: ${key}`;
       } catch (e) {
         return `Failed to save memory: ${e.message}`;
       }
     }, {
       name: 'save_memory',
-      description: 'Save information to persistent memory (MEMORY.md in repo). Use for storing important context, preferences, or notes that persist across sessions.',
+      description: 'Alias of remember. Save information to persistent JSON memory.',
       schema: z.object({
-        key: z.string().describe('Memory section name'),
-        value: z.string().describe('Content to save under this section'),
+        key: z.string().describe('Memory key'),
+        value: z.string().describe('Memory value'),
       }),
     }));
 
-    // 8. Read Memory — read the persistent memory file
     tools.push(tool(async ({ section }) => {
+      if (!memoryStore) return 'Memory backend unavailable.';
       try {
-        const memPath = 'loop-agent/MEMORY.md';
-        const file = await repoStore.readFile(memPath);
-        if (!file) return 'No memory file found. Memory is empty.';
-        if (section) {
-          const escaped = section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const sectionRegex = new RegExp(`## ${escaped}\\n([\\s\\S]*?)(?=\\n## |$)`);
-          const match = file.content.match(sectionRegex);
-          return match ? match[1].trim() : `Section "${section}" not found in memory.`;
+        const query = section || '';
+        if (!query) {
+          const all = memoryStore.entries.slice(0, 50);
+          if (all.length === 0) return 'No memory file found. Memory is empty.';
+          return all.map((m, idx) => `${idx + 1}. ${m.key}: ${m.value}`).join('\n');
         }
-        return file.content.slice(0, 4000) + (file.content.length > 4000 ? '\n...(truncated)' : '');
+        const matches = await memoryStore.recall(query);
+        if (matches.length === 0) return `Section "${section}" not found in memory.`;
+        return matches.map(m => `${m.key}: ${m.value}`).join('\n');
       } catch (e) {
         return `Failed to read memory: ${e.message}`;
       }
     }, {
       name: 'read_memory',
-      description: 'Read the persistent memory file (MEMORY.md). Returns all sections or a specific section.',
+      description: 'Alias of recall. Read persistent JSON memory by keyword, or all entries when section is omitted.',
       schema: z.object({
-        section: z.string().optional().describe('Specific section name to read, or omit to read all'),
+        section: z.string().optional().describe('Keyword to query memory entries, or omit to read all'),
       }),
     }));
   }
@@ -1143,70 +1397,45 @@ function createBuiltinTools(repoStore, llm, notifyFn) {
       let summary = '';
       try {
         const sharp = require('sharp');
-        const metadata = await sharp(filepath).metadata();
-        const maxDim = 2048;
-        let imageBuffer;
-        if (metadata.width > maxDim || metadata.height > maxDim) {
-          imageBuffer = await sharp(filepath)
-            .resize(maxDim, maxDim, { fit: 'inside', withoutEnlargement: true })
-            .png().toBuffer();
-        } else {
-          imageBuffer = fs.readFileSync(filepath);
-        }
-        const base64Data = imageBuffer.toString('base64');
         const provider = process.env.AI_PROVIDER || 'gemini';
         const apiKey = process.env.AI_API_KEY;
         const model = process.env.AI_MODEL || 'gemini-2.0-flash';
+        const glmVision = isGlmModel(model);
+        const metadata = await sharp(filepath).metadata();
+        const maxDim = 2048;
+        let imageBuffer;
+        let mimeType;
+        if (glmVision) {
+          let pipeline = sharp(filepath);
+          if (metadata.width > maxDim || metadata.height > maxDim) {
+            pipeline = pipeline.resize(maxDim, maxDim, { fit: 'inside', withoutEnlargement: true });
+          }
+          imageBuffer = await pipeline
+            .jpeg({ quality: 85, mozjpeg: true })
+            .toBuffer();
+          mimeType = 'image/jpeg';
+        } else if (metadata.width > maxDim || metadata.height > maxDim) {
+          imageBuffer = await sharp(filepath)
+            .resize(maxDim, maxDim, { fit: 'inside', withoutEnlargement: true })
+            .png()
+            .toBuffer();
+          mimeType = 'image/png';
+        } else {
+          imageBuffer = fs.readFileSync(filepath);
+          mimeType = getImageMimeType(metadata.format);
+        }
+        const base64Data = imageBuffer.toString('base64');
         const summaryPrompt = 'Briefly describe the main content and layout of this web page screenshot in 2-3 sentences. Focus on what information the page presents and its key elements.';
 
         console.log(`[Screenshot] Requesting AI summary from ${provider}/${model}...`);
-        if (provider === 'gemini') {
-          const resp = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [{ parts: [
-                  { text: summaryPrompt },
-                  { inline_data: { mime_type: 'image/png', data: base64Data } },
-                ]}],
-              }),
-            }
-          );
-          if (resp.ok) {
-            const data = await resp.json();
-            summary = data.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
-          }
-        } else {
-          const baseURLMap = {
-            qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-            kimi: 'https://api.moonshot.cn/v1',
-          };
-          const baseURL = process.env.AI_BASE_URL || baseURLMap[provider] || baseURLMap.qwen;
-          const visionModel = provider === 'qwen' ? 'qwen-vl-max' : model;
-          const resp = await fetch(`${baseURL}/chat/completions`, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${apiKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              model: visionModel,
-              messages: [{
-                role: 'user',
-                content: [
-                  { type: 'text', text: summaryPrompt },
-                  { type: 'image_url', image_url: { url: `data:image/png;base64,${base64Data}` } },
-                ],
-              }],
-            }),
-          });
-          if (resp.ok) {
-            const data = await resp.json();
-            summary = data.choices?.[0]?.message?.content || '';
-          }
-        }
+        summary = await requestVisionCompletion({
+          provider,
+          model,
+          apiKey,
+          promptText: summaryPrompt,
+          mimeType,
+          base64Data,
+        });
         if (summary) console.log(`[Screenshot] Summary obtained (${summary.length} chars)`);
       } catch (sumErr) {
         console.warn(`[Screenshot] Summary failed: ${sumErr.message}`);
@@ -1245,30 +1474,44 @@ function createBuiltinTools(repoStore, llm, notifyFn) {
       const metadata = await sharp(imagePath).metadata();
       const origW = metadata.width;
       const origH = metadata.height;
+      const provider = process.env.AI_PROVIDER || 'gemini';
+      const apiKey = process.env.AI_API_KEY;
+      const model = process.env.AI_MODEL || 'gemini-2.0-flash';
+      const glmVision = isGlmModel(model);
 
       // Resize for API if image is very large (max 4096px longest side)
       const maxDim = 4096;
       let imageBuffer;
       let scale = 1;
-      if (origW > maxDim || origH > maxDim) {
-        const resized = await sharp(imagePath)
+      let mimeType;
+      if (glmVision) {
+        let pipeline = sharp(imagePath);
+        if (origW > maxDim || origH > maxDim) {
+          pipeline = pipeline.resize(maxDim, maxDim, { fit: 'inside', withoutEnlargement: true });
+          const longerSide = Math.max(origW, origH);
+          scale = longerSide / maxDim;
+          console.log(`[Vision] Resized from ${origW}x${origH} → scale factor ${scale.toFixed(2)}`);
+        }
+        imageBuffer = await pipeline
+          .jpeg({ quality: 85, mozjpeg: true })
+          .toBuffer();
+        mimeType = 'image/jpeg';
+      } else if (origW > maxDim || origH > maxDim) {
+        imageBuffer = await sharp(imagePath)
           .resize(maxDim, maxDim, { fit: 'inside', withoutEnlargement: true })
           .png()
           .toBuffer();
-        imageBuffer = resized;
+        mimeType = 'image/png';
         const longerSide = Math.max(origW, origH);
         scale = longerSide / maxDim;
         console.log(`[Vision] Resized from ${origW}x${origH} → scale factor ${scale.toFixed(2)}`);
       } else {
         imageBuffer = fs.readFileSync(imagePath);
+        mimeType = getImageMimeType(metadata.format);
       }
 
       const base64Data = imageBuffer.toString('base64');
       const fileSizeKB = Math.round(imageBuffer.length / 1024);
-
-      const provider = process.env.AI_PROVIDER || 'gemini';
-      const apiKey = process.env.AI_API_KEY;
-      const model = process.env.AI_MODEL || 'gemini-2.0-flash';
 
       const scaleNote = scale > 1
         ? `\nIMPORTANT: The image was resized by a factor of ${scale.toFixed(2)} for analysis. The ORIGINAL image dimensions are ${origW}x${origH} pixels. All coordinates in your response MUST be in the ORIGINAL image coordinate space (multiply your visual coordinates by ${scale.toFixed(2)}).`
@@ -1288,61 +1531,15 @@ CROP_REGION: {"x": <left>, "y": <top>, "width": <width>, "height": <height>}`;
       console.log(`[Vision] Sending ${fileSizeKB}KB image to ${provider}/${model}...`);
       let responseText = '';
 
-      if (provider === 'gemini') {
-        const resp = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{
-                parts: [
-                  { text: analysisPrompt },
-                  { inline_data: { mime_type: 'image/png', data: base64Data } },
-                ],
-              }],
-            }),
-          }
-        );
-        if (!resp.ok) {
-          const err = await resp.text();
-          return `Vision API error (${resp.status}): ${err.slice(0, 500)}`;
-        }
-        const data = await resp.json();
-        responseText = data.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '(no response)';
-      } else {
-        // OpenAI-compatible vision API (Qwen, Kimi, etc.)
-        const baseURLMap = {
-          qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-          kimi: 'https://api.moonshot.cn/v1',
-        };
-        const baseURL = baseURLMap[provider] || baseURLMap.qwen;
-        const visionModel = provider === 'qwen' ? 'qwen-vl-max' : model;
-
-        const resp = await fetch(`${baseURL}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: visionModel,
-            messages: [{
-              role: 'user',
-              content: [
-                { type: 'text', text: analysisPrompt },
-                { type: 'image_url', image_url: { url: `data:image/png;base64,${base64Data}` } },
-              ],
-            }],
-          }),
-        });
-        if (!resp.ok) {
-          const err = await resp.text();
-          return `Vision API error (${resp.status}): ${err.slice(0, 500)}`;
-        }
-        const data = await resp.json();
-        responseText = data.choices?.[0]?.message?.content || '(no response)';
-      }
+      responseText = await requestVisionCompletion({
+        provider,
+        model,
+        apiKey,
+        promptText: analysisPrompt,
+        mimeType,
+        base64Data,
+      });
+      if (!responseText) responseText = '(no response)';
 
       console.log(`[Vision] Analysis complete (${responseText.length} chars)`);
       return `[Image: ${origW}x${origH}px, ${fileSizeKB}KB, scale=${scale.toFixed(2)}]\n\n${responseText}`;
@@ -2016,6 +2213,141 @@ function extractTextContent(content) {
   return String(content);
 }
 
+function normalizeMemoryText(text) {
+  return String(text || '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function buildTaskCacheKey(taskText) {
+  const normalized = normalizeMemoryText(taskText);
+  const digest = nodeCrypto.createHash('sha1').update(normalized).digest('hex').slice(0, 16);
+  return { key: `task_cache:${digest}`, normalized };
+}
+
+function isTaskCacheable(taskText, responseText) {
+  const query = normalizeMemoryText(taskText);
+  if (!query || query.length < 6) return false;
+  if (!responseText || String(responseText).startsWith('[Error]')) return false;
+  if (String(responseText).length > 12000) return false;
+  const volatilePattern = /\b(now|current|latest|today|yesterday|status|runtime|remaining|time|date|weather|stock|price)\b|现在|当前|今天|时间|状态|天气/i;
+  if (volatilePattern.test(query)) return false;
+  return true;
+}
+
+class AgentMemoryStore {
+  constructor(repoStore, memoryPath) {
+    this.repoStore = repoStore;
+    this.memoryPath = memoryPath;
+    this.entries = [];
+    this._loaded = false;
+  }
+
+  _sanitizeEntries(raw) {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .filter(e => e && typeof e.key === 'string' && typeof e.value === 'string')
+      .map(e => ({
+        key: e.key,
+        value: e.value,
+        timestamp: e.timestamp || new Date().toISOString(),
+      }));
+  }
+
+  async load() {
+    if (this._loaded) return;
+    if (!this.repoStore) {
+      this.entries = [];
+      this._loaded = true;
+      return;
+    }
+    try {
+      const file = await this.repoStore.readFile(this.memoryPath);
+      if (!file) {
+        this.entries = [];
+      } else {
+        this.entries = this._sanitizeEntries(JSON.parse(file.content));
+      }
+    } catch (e) {
+      console.warn(`[Memory] Failed to load ${this.memoryPath}: ${e.message}`);
+      this.entries = [];
+    }
+    this._loaded = true;
+  }
+
+  async save(message = '[loop-agent] Update memory.json') {
+    if (!this.repoStore) return;
+    await this.repoStore.writeFileRaw(
+      this.memoryPath,
+      JSON.stringify(this.entries, null, 2),
+      message
+    );
+  }
+
+  async remember(key, value) {
+    await this.load();
+    const ts = new Date().toISOString();
+    const idx = this.entries.findIndex(e => e.key === key);
+    if (idx >= 0) {
+      this.entries[idx] = { key, value, timestamp: ts };
+    } else {
+      this.entries.push({ key, value, timestamp: ts });
+    }
+    await this.save(`[loop-agent] remember ${key}`);
+    return { key, value, timestamp: ts };
+  }
+
+  async recall(query) {
+    await this.load();
+    const q = normalizeMemoryText(query);
+    if (!q) return this.entries.slice(0, 50);
+    return this.entries.filter(e => {
+      const k = normalizeMemoryText(e.key);
+      const v = normalizeMemoryText(e.value);
+      return k.includes(q) || v.includes(q);
+    });
+  }
+
+  async clear() {
+    await this.load();
+    this.entries = [];
+    await this.save('[loop-agent] Clear memory');
+  }
+
+  async getTaskCache(taskText) {
+    await this.load();
+    const { key, normalized } = buildTaskCacheKey(taskText);
+    const entry = this.entries.find(e => e.key === key);
+    if (!entry) return null;
+    try {
+      const payload = JSON.parse(entry.value);
+      if (normalizeMemoryText(payload.task) !== normalized) return null;
+      return payload;
+    } catch {
+      return null;
+    }
+  }
+
+  async rememberTaskResult(taskText, responseText) {
+    if (!isTaskCacheable(taskText, responseText)) return;
+    const { key, normalized } = buildTaskCacheKey(taskText);
+    const payload = {
+      task: normalized,
+      response: String(responseText),
+      savedAt: new Date().toISOString(),
+    };
+    await this.remember(key, JSON.stringify(payload));
+  }
+
+  async getPromptSnapshot(maxChars = 2000) {
+    await this.load();
+    if (this.entries.length === 0) return '';
+    const text = this.entries
+      .slice(-30)
+      .map(e => `${e.key}: ${e.value}`)
+      .join('\n');
+    return text.length > maxChars ? `${text.slice(0, maxChars)}...` : text;
+  }
+}
+
 // ─── LLM Factory ────────────────────────────────────────────────────
 
 function createLLM(provider, model, apiKey) {
@@ -2029,6 +2361,7 @@ function createLLM(provider, model, apiKey) {
   }
   // For qwen/kimi/openai/other OpenAI-compatible providers
   const { ChatOpenAI } = require('@langchain/openai');
+  const resolvedProvider = resolveModelProvider(provider, model);
   const baseURLMap = {
     qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     kimi: 'https://api.moonshot.cn/v1',
@@ -2043,10 +2376,10 @@ function createLLM(provider, model, apiKey) {
     ''
   );
   if (!resolvedApiKey) {
-    throw new Error(`Missing API key for ${provider}. Set AI_API_KEY (or OPENAI_API_KEY).`);
+    throw new Error(`Missing API key for ${resolvedProvider}. Set AI_API_KEY (or OPENAI_API_KEY).`);
   }
 
-  const baseURL = process.env.AI_BASE_URL || baseURLMap[provider] || baseURLMap.openai;
+  const baseURL = process.env.AI_BASE_URL || baseURLMap[resolvedProvider] || baseURLMap.openai;
   return new ChatOpenAI({
     model,
     apiKey: resolvedApiKey,
@@ -2254,10 +2587,11 @@ function printTimingSummary(state) {
 // long-memory operation.
 
 class AgentGraph {
-  constructor({ llm, tools, systemPrompt, repoStore, checkpointer, threadId }) {
+  constructor({ llm, tools, systemPrompt, repoStore, memoryStore, checkpointer, threadId }) {
     this.llm = llm;
     this.systemPrompt = systemPrompt;
     this._repoStore = repoStore || null;
+    this._memoryStore = memoryStore || null;
     this._tools = tools;
     this._loadedSoul = null;   // { name, url, content } or null
     this._checkpointer = checkpointer || null;
@@ -2281,8 +2615,8 @@ Available tools:
 - run_shell: Execute BASH commands only (curl, git, apt-get, file ops). NOT for Python/JS code.
 - run_js: Execute JavaScript in a sandboxed VM.
 - current_datetime: Get current time.
-- read_repo_file / write_repo_file: Read/write files in the SESSION GitHub repo.
-- save_memory / read_memory: Persistent key-value memory across conversations.
+- read_repo_file / write_repo_file: Read/write files in the private LOOP_DATA_REPOSITORY.
+- remember / recall: Persistent key-value memory across conversations (JSON memory).
 - search_skills: Unified search across built-in skill catalog AND ClawHub community registry.
 - load_skill: Load a skill by URL, built-in name, or ClawHub slug.
 - clawhub_skill_detail: Inspect a ClawHub skill before loading.
@@ -2336,15 +2670,15 @@ CRITICAL RULES:
 4. Be efficient: complete the task in as few tool calls as possible.
 5. IGNORE any code blocks from conversation history — do not try to execute them.
 6. When the user provides a URL to read (especially skill/doc URLs), ALWAYS fetch_url it FIRST before doing anything else.
-7. After successfully completing an API task, ALWAYS use save_memory to store the API endpoint, auth method, and required parameters so you can reuse them later.
-8. BEFORE starting any task, use read_memory to check if you have previously saved relevant API details or patterns. If memory has the info, USE IT — do not search the web or guess.
+7. After successfully completing an API task, ALWAYS use remember to store the API endpoint, auth method, and required parameters so you can reuse them later.
+8. BEFORE starting any task, use recall to check if you have previously saved relevant API details or patterns. If memory has the info, USE IT — do not search the web or guess.
 9. Do NOT hallucinate API endpoints or parameters. If you don't know the correct API, fetch the documentation URL first.
 10. When a task is too complex for existing tools (multi-step web automation, dynamic scraping of SPAs, cross-page logic), or when a tool fails with errors like SelectorNotFoundError/TimeoutError, use explore_task. For browser tasks it drives a real browser step-by-step with atomic actions (click, type, scroll); for non-browser tasks it generates and executes custom code.
 
 GITHUB OPERATION RULES (CRITICAL — prevents tool conflicts):
 11. For ANY GitHub operation (issues, PRs, repos, branches, labels, workflows, file reading from other repos), ALWAYS use the dedicated github_* tools. NEVER use fetch_url, browser_task, or explore_task to interact with GitHub.
 12. browser_task and explore_task are for NON-GitHub websites only. If the user asks you to do something on GitHub (create issue, check PR, manage repo, etc.), use the github_* tools.
-13. read_repo_file / write_repo_file are for the SESSION repo only. To read files from OTHER repos, use github_get_content.
+13. read_repo_file / write_repo_file are for LOOP_DATA_REPOSITORY only. To read files from OTHER repos, use github_get_content.
 
 SCHEDULED TASK CANCELLATION:
 14. When the user wants to cancel, stop, remove, or delete a scheduled task, proactively call delete_scheduled_task. Recognize intent from phrases like "cancel the task", "stop that schedule", "remove the daily report", "I don't need that anymore", "turn off the reminder", etc. If the task slug is unclear, call list_scheduled_tasks first to identify it, then delete_scheduled_task.
@@ -2442,6 +2776,8 @@ User commands (slash commands):
   async _analyze(userText, state, conversationMessages) {
     const startMs = Date.now();
     const { SystemMessage, HumanMessage } = require('@langchain/core/messages');
+    updateTaskProgress({ node: 'analyze', stage: 'classifying_intent' });
+    appendTaskThought('Analyzing user intent and deciding direct execution vs multi-step flow.');
 
     // CODE-LEVEL OVERRIDE: If user message contains a URL, always classify as "direct".
     const hasUrl = /https?:\/\/\S+/i.test(userText);
@@ -2451,6 +2787,7 @@ User commands (slash commands):
       state.intent = 'Read URL and follow instructions';
       state.requiredParams = {};
       state.collectedParams = {};
+      appendTaskThought('Detected URL in request, routing directly to execution.');
       recordNodeTiming(state, 'analyze', startMs, Date.now());
       await this._checkpoint('analyze', state);
       return this._execute(state, conversationMessages);
@@ -2464,6 +2801,7 @@ User commands (slash commands):
       state.intent = 'Cancel/delete a scheduled task';
       state.requiredParams = {};
       state.collectedParams = {};
+      appendTaskThought('Detected schedule cancellation intent, routing directly to execution tools.');
       recordNodeTiming(state, 'analyze', startMs, Date.now());
       await this._checkpoint('analyze', state);
       return this._execute(state, conversationMessages);
@@ -2477,6 +2815,7 @@ User commands (slash commands):
       state.intent = userText;
       state.requiredParams = {};
       state.collectedParams = {};
+      appendTaskThought('Detected GitHub operation intent, routing directly to github tools.');
       recordNodeTiming(state, 'analyze', startMs, Date.now());
       await this._checkpoint('analyze', state);
       return this._execute(state, conversationMessages);
@@ -2495,6 +2834,7 @@ User commands (slash commands):
       state.intent = userText;
       state.requiredParams = {};
       state.collectedParams = {};
+      appendTaskThought('Detected likely follow-up request after recent success, routing directly to execution.');
       recordNodeTiming(state, 'analyze', startMs, Date.now());
       await this._checkpoint('analyze', state);
       return this._execute(state, conversationMessages);
@@ -2508,8 +2848,8 @@ Available tools (these are REAL tools you can call in the execution phase):
 - run_js: Execute JavaScript code in a sandboxed VM
 - run_shell: Execute shell commands (bash) — curl, git, apt-get, jq, etc.
 - current_datetime: Get current date and time
-- read_repo_file / write_repo_file: Read/write files in the SESSION GitHub repository
-- save_memory / read_memory: Persistent memory storage
+- read_repo_file / write_repo_file: Read/write files in LOOP_DATA_REPOSITORY
+- remember / recall: Persistent memory storage
 - search_skills: Unified search across built-in skills and ClawHub community registry
 - load_skill: Load a skill by URL, built-in name, or ClawHub slug
 - clawhub_skill_detail: Get full details for a ClawHub skill by slug
@@ -2567,6 +2907,7 @@ CRITICAL rules:
       state.intent = analysis?.intent || '';
       state.requiredParams = {};
       state.collectedParams = {};
+      appendTaskThought(`Intent classified as direct. Intent summary: ${analysis?.intent || 'not provided by classifier'}`);
       recordNodeTiming(state, 'analyze', startMs, Date.now());
       await this._checkpoint('analyze', state);
       return this._execute(state, conversationMessages);
@@ -2576,6 +2917,7 @@ CRITICAL rules:
     state.intent = analysis.intent;
     state.requiredParams = analysis.required_params || {};
     state.collectedParams = analysis.collected_params || {};
+    appendTaskThought(`Intent classified as multi-step. Required params: ${Object.keys(analysis.required_params || {}).join(', ') || 'none'}`);
     recordNodeTiming(state, 'analyze', startMs, Date.now());
     await this._checkpoint('analyze', state);
     return this._validate(state, conversationMessages);
@@ -2584,6 +2926,7 @@ CRITICAL rules:
   // ── Validation Node (pure logic) ─────────────────────────────────
   _validate(state, conversationMessages) {
     const startMs = Date.now();
+    updateTaskProgress({ node: 'validate', stage: 'checking_required_params' });
     const required = state.requiredParams || {};
     const collected = state.collectedParams || {};
 
@@ -2598,6 +2941,7 @@ CRITICAL rules:
     console.log(`[Graph] Validate: ${Object.keys(required).length} required, ${Object.keys(collected).length} collected, ${missCount} missing`);
 
     if (missCount === 0) {
+      appendTaskThought('All required parameters are available. Proceeding to execution.');
       state.phase = 'execute';
       state._waitRounds = 0;
       recordNodeTiming(state, 'validate', startMs, Date.now());
@@ -2607,6 +2951,7 @@ CRITICAL rules:
 
     state.phase = 'waiting_for_params';
     state.missingParams = missing;
+    appendTaskThought(`Missing parameters detected (${missCount}). Asking user for additional input.`);
     recordNodeTiming(state, 'validate', startMs, Date.now());
     return this._askUser(state, conversationMessages);
   }
@@ -2615,6 +2960,7 @@ CRITICAL rules:
   async _askUser(state, conversationMessages) {
     const startMs = Date.now();
     const { SystemMessage } = require('@langchain/core/messages');
+    updateTaskProgress({ node: 'ask_user', stage: 'waiting_for_user_input' });
 
     const missingList = Object.entries(state.missingParams || {})
       .map(([k, v]) => `- ${k}: ${v}`)
@@ -2646,6 +2992,8 @@ Ask the user for the missing information in a natural, friendly way. Be concise.
   async _onUserReply(userText, state, conversationMessages) {
     const startMs = Date.now();
     const { SystemMessage, HumanMessage } = require('@langchain/core/messages');
+    updateTaskProgress({ node: 'on_user_reply', stage: 'extracting_user_parameters' });
+    appendTaskThought('Received follow-up input while collecting parameters. Extracting candidate values.');
 
     // Escape valve: if stuck in waiting_for_params for too many rounds,
     // or user message seems unrelated to parameter collection, reset to analyze.
@@ -2659,6 +3007,7 @@ Ask the user for the missing information in a natural, friendly way. Be concise.
       state.collectedParams = {};
       state.missingParams = {};
       state._waitRounds = 0;
+      appendTaskIssue('Parameter collection exceeded safe retry rounds; resetting flow to analyze to avoid deadlock.');
       recordNodeTiming(state, 'onUserReply', startMs, Date.now());
       await this._checkpoint('onUserReply', state);
       return this._analyze(userText, state, conversationMessages);
@@ -2698,6 +3047,7 @@ Respond with ONLY valid JSON (no markdown):
       state.collectedParams = {};
       state.missingParams = {};
       state._waitRounds = 0;
+      appendTaskThought('User indicated cancellation or context switch; returning to analyze node.');
       recordNodeTiming(state, 'onUserReply', startMs, Date.now());
       await this._checkpoint('onUserReply', state);
       return this._analyze(userText, state, conversationMessages);
@@ -2705,6 +3055,7 @@ Respond with ONLY valid JSON (no markdown):
 
     if (parsed?.extracted) {
       state.collectedParams = { ...state.collectedParams, ...parsed.extracted };
+      appendTaskThought(`Extracted parameters: ${Object.keys(parsed.extracted).join(', ')}`);
       console.log(`[Graph] Extracted params: ${Object.keys(parsed.extracted).join(', ')}`);
     }
 
@@ -2717,15 +3068,14 @@ Respond with ONLY valid JSON (no markdown):
   async _execute(state, conversationMessages) {
     const startMs = Date.now();
     const { HumanMessage, AIMessage } = require('@langchain/core/messages');
+    updateTaskProgress({ node: 'execute', stage: 'running_tools_and_reasoning' });
+    appendTaskThought('Invoking execution agent with recent conversation context and tools.');
 
     // Pre-load persistent memory so the executor has context from previous successes
     let memoryContext = '';
     try {
-      if (this._repoStore) {
-        const memFile = await this._repoStore.readFile('loop-agent/MEMORY.md');
-        if (memFile && memFile.content) {
-          memoryContext = memFile.content.slice(0, 2000);
-        }
+      if (this._memoryStore) {
+        memoryContext = await this._memoryStore.getPromptSnapshot(2000);
       }
     } catch { /* ignore - memory is optional */ }
 
@@ -2787,11 +3137,13 @@ Respond with ONLY valid JSON (no markdown):
       // If recursion limit hit, try to extract partial response
       if (execErr.message && execErr.message.includes('Recursion limit')) {
         console.warn(`[Graph] Recursion limit hit, returning partial result`);
+        appendTaskIssue(`Execution recursion limit reached: ${execErr.message}`);
         state.lastError = { node: 'execute', message: execErr.message, ts: Date.now() };
         recordNodeTiming(state, 'execute', startMs, Date.now());
         await this._checkpoint('execute', state);
         return { response: `I attempted to complete the task but it required too many steps. Please break it down into smaller requests, or provide specific information I'm missing.` };
       }
+      appendTaskIssue(`Execution error: ${execErr.message}`);
       state.lastError = { node: 'execute', message: execErr.message, ts: Date.now() };
       recordNodeTiming(state, 'execute', startMs, Date.now());
       await this._checkpoint('execute', state);
@@ -2803,6 +3155,7 @@ Respond with ONLY valid JSON (no markdown):
     );
     if (toolMsgs.length > 0) {
       console.log(`[Graph] Execute used ${toolMsgs.length} tool(s): ${toolMsgs.map(m => m.name || 'unknown').join(', ')}`);
+      appendTaskThought(`Tools used: ${toolMsgs.map(m => m.name || 'unknown').join(', ')}`);
     }
 
     const lastMsg = result.messages[result.messages.length - 1];
@@ -3137,16 +3490,132 @@ const _skillRouter = new SkillRouter();
  * Handle slash commands from the user.
  * Returns { handled: true, responseText } if it was a command, or { handled: false } otherwise.
  */
-async function handleSlashCommand(text, { agentGraph, graphState, repoStore }) {
+async function handleSlashCommand(text, { agentGraph, graphState, repoStore, memoryStore, loopKey, pushooChannels, runtimeCtx }) {
   const cmd = text.trim();
   const lower = cmd.toLowerCase();
 
+  // ── /channel* runtime channel management ──
+  if (lower === '/channel' || lower === '/channel help') {
+    return {
+      handled: true,
+      responseText: [
+        '**Channel Commands**',
+        '- `/channel list` — list configured channels',
+        '- `/channel add <platform> <token>` — add/update a channel',
+        '- `/channel switch <platform>` — switch active communication mode',
+        '- `/channel remove <platform>` — remove a configured channel',
+        '',
+        'Examples:',
+        '- `/channel add bark https://api.day.app/xxxx/yyyy`',
+        '- `/channel switch telegram`',
+      ].join('\n'),
+    };
+  }
+
+  if (lower === '/channel list') {
+    if (!Array.isArray(pushooChannels) || pushooChannels.length === 0) {
+      return { handled: true, responseText: 'No channels configured. Use `/channel add <platform> <token>`.' };
+    }
+    const lines = ['**Configured Channels:**'];
+    for (const ch of pushooChannels) {
+      lines.push(`- ${normalizePlatformName(ch.platform)} (${maskToken(ch.token)})`);
+    }
+    lines.push(`\nActive listener: ${_runtime.listener ? _runtime.listener.type : 'notification-only'}`);
+    return { handled: true, responseText: lines.join('\n') };
+  }
+
+  if (lower.startsWith('/channel add ')) {
+    const m = cmd.match(/^\/channel\s+add\s+(\S+)\s+([\s\S]+)$/i);
+    if (!m) {
+      return { handled: true, responseText: '⚠️ Usage: `/channel add <platform> <token>`' };
+    }
+    const platform = normalizePlatformName(m[1]);
+    const token = m[2].trim();
+    if (!SUPPORTED_CHANNEL_PLATFORMS.has(platform)) {
+      return {
+        handled: true,
+        responseText: `⚠️ Unsupported platform: ${platform}. Supported: ${Array.from(SUPPORTED_CHANNEL_PLATFORMS).join(', ')}`,
+      };
+    }
+
+    try {
+      upsertChannel(pushooChannels, platform, token);
+      await persistRuntimeChannels(repoStore, loopKey, pushooChannels);
+
+      let switched = false;
+      if (runtimeCtx && isBidirectionalPlatform(platform)) {
+        await switchActiveListener([...pushooChannels], runtimeCtx);
+        switched = true;
+      }
+
+      return {
+        handled: true,
+        responseText: switched
+          ? `✅ Channel ${platform} updated and active listener switched.`
+          : `✅ Channel ${platform} updated.`,
+      };
+    } catch (e) {
+      return { handled: true, responseText: `❌ Failed to add channel: ${e.message}` };
+    }
+  }
+
+  if (lower.startsWith('/channel switch ')) {
+    const platform = normalizePlatformName(cmd.slice('/channel switch '.length).trim());
+    if (!SUPPORTED_CHANNEL_PLATFORMS.has(platform)) {
+      return {
+        handled: true,
+        responseText: `⚠️ Unsupported platform: ${platform}. Supported: ${Array.from(SUPPORTED_CHANNEL_PLATFORMS).join(', ')}`,
+      };
+    }
+
+    const target = findChannel(pushooChannels, platform);
+    if (!target) {
+      return {
+        handled: true,
+        responseText: `⚠️ Channel ${platform} is not configured. Use: /channel add ${platform} <token>`,
+      };
+    }
+
+    const nonBidirectional = pushooChannels.filter(ch => !isBidirectionalPlatform(normalizePlatformName(ch.platform)));
+    const nextChannels = isBidirectionalPlatform(platform)
+      ? [target, ...nonBidirectional]
+      : [target, ...nonBidirectional.filter(ch => normalizePlatformName(ch.platform) !== platform)];
+
+    pushooChannels.length = 0;
+    pushooChannels.push(...nextChannels);
+    await persistRuntimeChannels(repoStore, loopKey, pushooChannels);
+
+    if (runtimeCtx) {
+      await switchActiveListener([...pushooChannels], runtimeCtx);
+    }
+    return {
+      handled: true,
+      responseText: `✅ Active communication channel switched to ${platform}.`,
+    };
+  }
+
+  if (lower.startsWith('/channel remove ')) {
+    const platform = normalizePlatformName(cmd.slice('/channel remove '.length).trim());
+    const before = pushooChannels.length;
+    const nextChannels = pushooChannels.filter(ch => normalizePlatformName(ch.platform) !== platform);
+    if (nextChannels.length === before) {
+      return { handled: true, responseText: `⚠️ Channel ${platform} not found.` };
+    }
+
+    pushooChannels.length = 0;
+    pushooChannels.push(...nextChannels);
+    await persistRuntimeChannels(repoStore, loopKey, pushooChannels);
+    if (runtimeCtx) {
+      await switchActiveListener([...pushooChannels], runtimeCtx);
+    }
+    return { handled: true, responseText: `✅ Channel ${platform} removed.` };
+  }
+
   // ── /memory clear ──
   if (lower === '/memory clear') {
-    if (!repoStore) return { handled: true, responseText: '⚠️ No repo connection — cannot clear memory.' };
+    if (!memoryStore) return { handled: true, responseText: '⚠️ No memory backend — cannot clear memory.' };
     try {
-      const memPath = 'loop-agent/MEMORY.md';
-      await repoStore.writeFile(memPath, '# Agent Memory\n', '[loop-agent] Clear memory (user command)');
+      await memoryStore.clear();
       return { handled: true, responseText: '✅ Memory cleared.' };
     } catch (e) {
       return { handled: true, responseText: `❌ Failed to clear memory: ${e.message}` };
@@ -3312,12 +3781,40 @@ async function handleSlashCommand(text, { agentGraph, graphState, repoStore }) {
   return { handled: false };
 }
 
-async function processUserMessage(text, { agentGraph, graphState, history, repoStore, loopKey, historyPath }) {
+async function processUserMessage(text, { agentGraph, graphState, history, repoStore, memoryStore, loopKey, historyPath, pushooChannels = [], sourcePlatform = '', runtimeCtx = null }) {
+  let workingText = String(text || '');
+
+  // Natural-language channel switch command (Chinese/English)
+  const switchMatch = workingText.match(/(?:切换|switch)(?:\s*到|\s+to)?\s*([a-zA-Z\u4e00-\u9fa5]+)\s*(?:渠道|channel)?/i);
+  if (switchMatch) {
+    const candidate = normalizePlatformName(switchMatch[1]);
+    if (SUPPORTED_CHANNEL_PLATFORMS.has(candidate)) {
+      workingText = `/channel switch ${candidate}`;
+    }
+  }
+
+  const addMatch = workingText.match(/(?:配置|添加|新增|add|configure)\s*([a-zA-Z\u4e00-\u9fa5]+)\s*(?:渠道|channel)?\s*(?:token|key|密钥|令牌)?\s*[:：=]\s*([^\s]+)/i);
+  if (addMatch) {
+    const platform = normalizePlatformName(addMatch[1]);
+    const token = addMatch[2].trim();
+    if (SUPPORTED_CHANNEL_PLATFORMS.has(platform) && token) {
+      workingText = `/channel add ${platform} ${token}`;
+    }
+  }
+
   // ── Check for slash commands first ──
-  if (text.trim().startsWith('/')) {
-    const cmdResult = await handleSlashCommand(text, { agentGraph, graphState, repoStore });
+  if (workingText.trim().startsWith('/')) {
+    const cmdResult = await handleSlashCommand(workingText, {
+      agentGraph,
+      graphState,
+      repoStore,
+      memoryStore,
+      loopKey,
+      pushooChannels,
+      runtimeCtx,
+    });
     if (cmdResult.handled) {
-      console.log(`[Command] Handled: ${text.trim().split(' ').slice(0, 3).join(' ')}`);
+      console.log(`[Command] Handled: ${workingText.trim().split(' ').slice(0, 3).join(' ')}`);
       history.addUser(text);
       history.addAssistant(cmdResult.responseText);
       if (repoStore) {
@@ -3328,16 +3825,71 @@ async function processUserMessage(text, { agentGraph, graphState, history, repoS
     }
   }
 
+  // Task-level delivery preference (e.g. "send result via bark")
+  const deliveryDirective = parseDeliveryDirective(workingText);
+  let deliveryChannel = null;
+  if (deliveryDirective) {
+    workingText = deliveryDirective.cleanedText || workingText;
+    deliveryChannel = findChannel(pushooChannels, deliveryDirective.platform);
+
+    if (!deliveryChannel) {
+      if (deliveryDirective.token) {
+        try {
+          deliveryChannel = upsertChannel(pushooChannels, deliveryDirective.platform, deliveryDirective.token);
+          await persistRuntimeChannels(repoStore, loopKey, pushooChannels);
+        } catch (e) {
+          return { responseText: `⚠️ Failed to configure ${deliveryDirective.platform}: ${e.message}` };
+        }
+      } else {
+        return {
+          responseText: `⚠️ Channel ${deliveryDirective.platform} is not configured. Use /channel add ${deliveryDirective.platform} <token>, then retry.`,
+          delivery: { platform: deliveryDirective.platform, routedExternally: false },
+        };
+      }
+    }
+  }
+
+  // Fast path: exact repeated task cache hit
+  if (memoryStore) {
+    try {
+      const cached = await memoryStore.getTaskCache(workingText);
+      if (cached && cached.response) {
+        const responseText = `${cached.response}\n\n(Served from memory cache for repeated task.)`;
+        history.addUser(text);
+        history.addAssistant(responseText);
+        if (repoStore) await history.save();
+        updateTaskProgress({
+          active: false,
+          node: 'memory_cache',
+          stage: 'cache_hit',
+          lastResultPreview: _trimPreview(cached.response, 240),
+        });
+        appendTaskThought('Returned cached result from JSON memory for repeated task.');
+        return { responseText };
+      }
+    } catch (cacheErr) {
+      console.warn(`[Memory] Task cache lookup failed: ${cacheErr.message}`);
+    }
+  }
+
   history.addUser(text);
   history.trim(50);
+  beginTaskProgress(workingText);
 
   let responseText;
   try {
     const langchainMessages = await history.toLangChainMessages();
-    console.log(`[Agent] Processing: ${text.length} chars, phase: ${graphState.phase || 'analyze'}, ${langchainMessages.length} history msgs`);
+    console.log(`[Agent] Processing: ${workingText.length} chars, phase: ${graphState.phase || 'analyze'}, ${langchainMessages.length} history msgs`);
 
-    const result = await agentGraph.process(text, graphState, langchainMessages);
+    const result = await agentGraph.process(workingText, graphState, langchainMessages);
     responseText = result.response;
+
+    const artifactUrls = (_runtime.taskProgress?.artifactUrls || []).slice(-5);
+    if (artifactUrls.length > 0) {
+      responseText += `\n\nArtifact URLs:\n${artifactUrls.map(u => `- ${u}`).join('\n')}`;
+    }
+
+    finishTaskProgress(responseText, true);
 
     console.log(`[Agent] Done. Response: ${responseText.length} chars, next phase: ${graphState.phase}`);
   } catch (agentErr) {
@@ -3346,17 +3898,43 @@ async function processUserMessage(text, { agentGraph, graphState, history, repoS
     const safeStack = (agentErr.stack || '').split('\n').slice(0, 5).join('\n');
     console.error(`[Agent] Stack (truncated):\n${safeStack}`);
     responseText = `[Error] Agent failed: ${agentErr.message}`;
+    appendTaskIssue(`Agent process error: ${agentErr.message}`);
+    finishTaskProgress(responseText, false);
     graphState.phase = 'analyze';
     graphState.lastError = { node: 'process', message: agentErr.message, ts: Date.now() };
   }
 
   history.addAssistant(responseText);
+  if (memoryStore) {
+    try {
+      await memoryStore.rememberTaskResult(workingText, responseText);
+    } catch (e) {
+      console.warn(`[Memory] Failed to cache task result: ${e.message}`);
+    }
+  }
   if (repoStore) {
     await history.save();
     // State is already checkpointed inside nodes — no extra save needed
   }
 
-  return { responseText };
+  if (deliveryChannel) {
+    await sendNotifications([
+      { platform: normalizePlatformName(deliveryChannel.platform), token: deliveryChannel.token },
+    ], `[Task Result] ${loopKey}`, responseText);
+
+    const requestedPlatform = normalizePlatformName(deliveryChannel.platform);
+    const currentSource = normalizePlatformName(sourcePlatform);
+    const routedExternally = requestedPlatform !== currentSource;
+    return {
+      responseText,
+      delivery: {
+        platform: requestedPlatform,
+        routedExternally,
+      },
+    };
+  }
+
+  return { responseText, delivery: null };
 }
 
 // ─── Schedule Manager ───────────────────────────────────────────────
@@ -3491,7 +4069,132 @@ const _runtime = {
   processedCount: 0,     // total messages processed
   startTime: 0,          // process start timestamp
   dormant: false,        // dormant mode (Upstash-inherited, ignores regular messages)
+  taskProgress: {
+    active: false,
+    startedAt: 0,
+    updatedAt: 0,
+    node: 'idle',
+    stage: 'idle',
+    inputPreview: '',
+    thoughts: [],
+    issues: [],
+    lastResultPreview: '',
+    artifactUrls: [],
+  },
+  currentDataRepo: '',
 };
+
+function _trimPreview(text, maxLen = 180) {
+  if (!text) return '';
+  const s = String(text).replace(/\s+/g, ' ').trim();
+  return s.length > maxLen ? `${s.slice(0, maxLen)}...` : s;
+}
+
+function beginTaskProgress(inputText) {
+  _runtime.taskProgress = {
+    active: true,
+    startedAt: Date.now(),
+    updatedAt: Date.now(),
+    node: 'analyze',
+    stage: 'received_message',
+    inputPreview: _trimPreview(inputText, 220),
+    thoughts: ['Received user message and started task orchestration.'],
+    issues: [],
+    lastResultPreview: '',
+    artifactUrls: [],
+  };
+}
+
+function registerArtifactPath(path) {
+  const repo = _runtime.currentDataRepo;
+  if (!repo || !path) return null;
+  const cleanPath = String(path).replace(/^\/+/, '');
+  const url = `https://github.com/${repo}/blob/main/${cleanPath}`;
+  const cur = _runtime.taskProgress || {};
+  const urls = Array.isArray(cur.artifactUrls) ? [...cur.artifactUrls] : [];
+  if (!urls.includes(url)) urls.push(url);
+  _runtime.taskProgress = {
+    ...cur,
+    artifactUrls: urls.slice(-10),
+    updatedAt: Date.now(),
+  };
+  return url;
+}
+
+function updateTaskProgress(patch = {}) {
+  const cur = _runtime.taskProgress || {};
+  _runtime.taskProgress = {
+    ...cur,
+    ...patch,
+    updatedAt: Date.now(),
+  };
+}
+
+function appendTaskThought(thought) {
+  if (!thought) return;
+  const cur = _runtime.taskProgress || { thoughts: [] };
+  const thoughts = Array.isArray(cur.thoughts) ? [...cur.thoughts] : [];
+  thoughts.push(_trimPreview(thought, 260));
+  _runtime.taskProgress = {
+    ...cur,
+    thoughts: thoughts.slice(-8),
+    updatedAt: Date.now(),
+  };
+}
+
+function appendTaskIssue(issue) {
+  if (!issue) return;
+  const cur = _runtime.taskProgress || { issues: [] };
+  const issues = Array.isArray(cur.issues) ? [...cur.issues] : [];
+  issues.push(_trimPreview(issue, 260));
+  _runtime.taskProgress = {
+    ...cur,
+    issues: issues.slice(-8),
+    updatedAt: Date.now(),
+  };
+}
+
+function finishTaskProgress(responseText, success = true) {
+  const cur = _runtime.taskProgress || {};
+  _runtime.taskProgress = {
+    ...cur,
+    active: false,
+    node: success ? 'done' : (cur.node || 'error'),
+    stage: success ? 'completed' : 'failed',
+    lastResultPreview: _trimPreview(responseText, 240),
+    updatedAt: Date.now(),
+  };
+}
+
+function formatTaskProgressText() {
+  const p = _runtime.taskProgress;
+  if (!p || !p.active) {
+    return 'No active task. Agent is idle.';
+  }
+  const elapsedSec = Math.max(0, Math.round((Date.now() - (p.startedAt || Date.now())) / 1000));
+  const lines = [
+    'Task is currently running.',
+    `Node: ${p.node || 'unknown'}`,
+    `Stage: ${p.stage || 'working'}`,
+    `Elapsed: ${elapsedSec}s`,
+  ];
+  if (p.inputPreview) lines.push(`Task: ${p.inputPreview}`);
+  if (Array.isArray(p.thoughts) && p.thoughts.length > 0) {
+    lines.push('Thinking:');
+    for (const t of p.thoughts.slice(-4)) lines.push(`- ${t}`);
+  }
+  if (Array.isArray(p.issues) && p.issues.length > 0) {
+    lines.push('Issues:');
+    for (const it of p.issues.slice(-4)) lines.push(`- ${it}`);
+  } else {
+    lines.push('Issues: none reported yet');
+  }
+  if (Array.isArray(p.artifactUrls) && p.artifactUrls.length > 0) {
+    lines.push('Artifacts:');
+    for (const url of p.artifactUrls.slice(-5)) lines.push(`- ${url}`);
+  }
+  return lines.join('\n');
+}
 
 // ─── Stoppable Telegram Listener ────────────────────────────────────
 
@@ -3542,7 +4245,8 @@ async function createTelegramListener(ctx) {
       `Processed: ${_runtime.processedCount} messages\n` +
       `Remaining: ~${remaining} min\n` +
       `Model: ${ctx.aiProvider}/${ctx.aiModel}\n` +
-      `Processing: ${_runtime.processing ? 'yes' : 'idle'}`
+      `Processing: ${_runtime.processing ? 'yes' : 'idle'}\n\n` +
+      formatTaskProgressText()
     );
   });
 
@@ -3560,7 +4264,7 @@ async function createTelegramListener(ctx) {
     if (!text || /^\/(start|status|stop)\b/i.test(text)) return;
 
     if (_runtime.processing) {
-      await bctx.reply('⏳ Still processing the previous message, please wait...');
+      await bctx.reply(`⏳ Still processing.\n\n${formatTaskProgressText()}`);
       return;
     }
 
@@ -3569,13 +4273,22 @@ async function createTelegramListener(ctx) {
 
     try {
       await bctx.sendChatAction('typing');
-      const { responseText } = await processUserMessage(text, {
+      const result = await processUserMessage(text, {
         agentGraph: ctx.agentGraph, graphState: ctx.graphState,
-        history: ctx.history, repoStore: ctx.repoStore,
+        history: ctx.history, repoStore: ctx.repoStore, memoryStore: ctx.memoryStore,
         loopKey: ctx.loopKey, historyPath: ctx.historyPath,
+        pushooChannels: ctx.pushooChannels,
+        sourcePlatform: 'telegram',
+        runtimeCtx: ctx,
       });
+      const responseText = result.responseText;
 
-      const chunks = splitTelegramMessage(responseText);
+      const routedExternally = !!(result.delivery && result.delivery.routedExternally);
+      const telegramReply = routedExternally
+        ? `✅ Task completed. Result sent via ${result.delivery.platform}.`
+        : responseText;
+
+      const chunks = splitTelegramMessage(telegramReply);
       for (const chunk of chunks) {
         await bctx.reply(chunk);
       }
@@ -3767,7 +4480,7 @@ async function createWecomListener(ctx) {
     if (/^\/status\b/i.test(content)) {
       const elapsed = Math.round((Date.now() - _runtime.startTime) / 60000);
       const remaining = Math.round((ctx.maxRuntime - (Date.now() - _runtime.startTime)) / 60000);
-      const statusText = `📊 Agent Status\nProcessed: ${_runtime.processedCount} messages\nRunning: ${elapsed} min\nRemaining: ~${remaining} min\nModel: ${ctx.aiProvider}/${ctx.aiModel}\nProcessing: ${_runtime.processing ? 'yes' : 'idle'}`;
+      const statusText = `📊 Agent Status\nProcessed: ${_runtime.processedCount} messages\nRunning: ${elapsed} min\nRemaining: ~${remaining} min\nModel: ${ctx.aiProvider}/${ctx.aiModel}\nProcessing: ${_runtime.processing ? 'yes' : 'idle'}\n\n${formatTaskProgressText()}`;
       try {
         const streamId = generateReqId('stream');
         await wsClient.replyStream(frame, streamId, statusText, true);
@@ -3787,7 +4500,7 @@ async function createWecomListener(ctx) {
     if (_runtime.processing) {
       try {
         const streamId = generateReqId('stream');
-        await wsClient.replyStream(frame, streamId, '⏳ Still processing, please wait...', true);
+        await wsClient.replyStream(frame, streamId, `⏳ Still processing.\n\n${formatTaskProgressText()}`, true);
       } catch { /* best effort */ }
       return;
     }
@@ -3795,13 +4508,22 @@ async function createWecomListener(ctx) {
     _runtime.processing = true;
     _runtime.wecomActiveFrame = frame;
     try {
-      const { responseText } = await processUserMessage(content, {
+      const result = await processUserMessage(content, {
         agentGraph: ctx.agentGraph, graphState: ctx.graphState,
-        history: ctx.history, repoStore: ctx.repoStore,
+        history: ctx.history, repoStore: ctx.repoStore, memoryStore: ctx.memoryStore,
         loopKey: ctx.loopKey, historyPath: ctx.historyPath,
+        pushooChannels: ctx.pushooChannels,
+        sourcePlatform: 'wecombot',
+        runtimeCtx: ctx,
       });
+      const responseText = result.responseText;
 
-      const chunks = splitWecomMessage(responseText);
+      const routedExternally = !!(result.delivery && result.delivery.routedExternally);
+      const wecomReply = routedExternally
+        ? `✅ Task completed. Result sent via ${result.delivery.platform}.`
+        : responseText;
+
+      const chunks = splitWecomMessage(wecomReply);
       for (const chunk of chunks) {
         const streamId = generateReqId('stream');
         await wsClient.replyStream(frame, streamId, chunk, true);
@@ -3992,7 +4714,10 @@ function startScheduler(ctx) {
 
       try {
         const { responseText } = await processUserMessage(msgText, {
-          agentGraph, graphState, history, repoStore, loopKey, historyPath,
+          agentGraph, graphState, history, repoStore, memoryStore: ctx.memoryStore, loopKey, historyPath,
+          pushooChannels,
+          sourcePlatform: 'scheduler',
+          runtimeCtx: ctx,
         });
 
         // Send result to all configured notification channels
@@ -4168,6 +4893,8 @@ function startBrowserPolling(ctx) {
         `Channels: ${channelList}`,
         `Upstash: ${upstash ? '✓' : '✗'}`,
         `Memory: ${Math.round(memUsage.heapUsed / 1048576)}MB / ${Math.round(memUsage.heapTotal / 1048576)}MB`,
+        '',
+        formatTaskProgressText(),
       ].join('\n');
       await sendResponse(status);
       console.log(`[Control] STATUS responded`);
@@ -4202,12 +4929,6 @@ function startBrowserPolling(ctx) {
         await sendNotifications(ctx.pushooChannels, `[Loop Agent] ${restarted ? 'Restarting' : 'Shutting Down'}`, msg);
         await updateStatus('restarting', { stoppedAt: Date.now() });
         process.exit(0);
-      }
-
-      // Skip polling if processing
-      if (_runtime.processing) {
-        _runtime.pollTimer = setTimeout(pollOnce, currentInterval);
-        return;
       }
 
       // Poll for message
@@ -4253,6 +4974,13 @@ function startBrowserPolling(ctx) {
         }
       }
 
+      // If a task is already running, return live progress immediately.
+      if (_runtime.processing) {
+        await sendResponse(`⏳ Still processing.\n\n${formatTaskProgressText()}`);
+        _runtime.pollTimer = setTimeout(pollOnce, currentInterval);
+        return;
+      }
+
       // ── Dormant mode — ignore regular messages ──
       if (_runtime.dormant) {
         console.log(`[Browser Poll] Dormant — ignoring message (${msg.text.length} chars)`);
@@ -4265,11 +4993,17 @@ function startBrowserPolling(ctx) {
       console.log(`[Browser Poll] Processing message (${msg.text.length} chars)`);
 
       try {
-        const { responseText } = await processUserMessage(msg.text, {
+        const result = await processUserMessage(msg.text, {
           agentGraph: ctx.agentGraph, graphState: ctx.graphState,
           history: ctx.history, repoStore: ctx.repoStore,
           loopKey: ctx.loopKey, historyPath: ctx.historyPath,
+          memoryStore: ctx.memoryStore,
+          pushooChannels: ctx.pushooChannels,
+          sourcePlatform: _runtime.listener ? _runtime.listener.type : 'polling',
+          runtimeCtx: ctx,
         });
+        const responseText = result.responseText;
+        const hasDeliveryOverride = !!(result.delivery && result.delivery.platform);
 
         console.log(`[Browser Poll] Response (${responseText.length} chars)`);
 
@@ -4283,7 +5017,7 @@ function startBrowserPolling(ctx) {
 
         // Send pushoo notifications (for non-bidirectional channels)
         // In notification-only mode, this is the only way the user gets responses
-        if (!_runtime.listener) {
+        if (!_runtime.listener && !hasDeliveryOverride) {
           const truncated = responseText.length > 500 ? responseText.slice(0, 500) + '...' : responseText;
           await sendNotifications(ctx.pushooChannels, `[Reply] [Loop Agent] Reply`, truncated);
         }
@@ -4318,9 +5052,10 @@ async function main() {
   const AI_PROVIDER = process.env.AI_PROVIDER || 'gemini';
   const AI_MODEL = process.env.AI_MODEL || 'gemini-2.0-flash';
   const AI_API_KEY = process.env.AI_API_KEY;
-  const PUSHOO_CHANNELS = parsePushooChannels();
+  let PUSHOO_CHANNELS = parsePushooChannels();
   const GH_PAT = process.env.GH_PAT;
   const GITHUB_REPOSITORY = process.env.GITHUB_REPOSITORY;
+  const LOOP_DATA_REPOSITORY = process.env.LOOP_DATA_REPOSITORY || GITHUB_REPOSITORY;
   const LOOP_WORKFLOW_FILE = process.env.LOOP_WORKFLOW_FILE || '';
   const LOOP_HISTORY_PATH = process.env.LOOP_HISTORY_PATH || 'loop-agent/history';
   const POLL_INTERVAL = parseInt(process.env.LOOP_POLL_INTERVAL || '5', 10) * 1000;
@@ -4328,12 +5063,12 @@ async function main() {
   const SYSTEM_PROMPT = process.env.LOOP_SYSTEM_PROMPT || '';
 
   // Extract channel configs
-  const telegramChannel = PUSHOO_CHANNELS.find(ch => ch.platform === 'telegram');
-  const wecomChannel = PUSHOO_CHANNELS.find(ch => ch.platform === 'wecombot');
+  const telegramChannel = PUSHOO_CHANNELS.find(ch => normalizePlatformName(ch.platform) === 'telegram');
+  const wecomChannel = PUSHOO_CHANNELS.find(ch => normalizePlatformName(ch.platform) === 'wecombot');
   const useTelegram = !!(telegramChannel && telegramChannel.token);
   const useWecom = !!(wecomChannel && wecomChannel.token);
   const hasUpstash = !!(UPSTASH_URL && UPSTASH_TOKEN);
-  const hasRepoStore = !!(GH_PAT && GITHUB_REPOSITORY);
+  const hasRepoStore = !!(GH_PAT && LOOP_DATA_REPOSITORY);
 
   // Validate required env
   if (!useTelegram && !useWecom && !hasUpstash && !hasRepoStore) {
@@ -4391,17 +5126,21 @@ async function main() {
     console.log(`[Upstash] Not configured — ${hasRepoStore ? 'using repo-based polling' : 'N/A'}`);
   }
 
-  const LOOP_ENCRYPT_KEY = process.env.LOOP_ENCRYPT_KEY || '';
-
-  const repoStore = GH_PAT && GITHUB_REPOSITORY
-    ? new RepoStore(GH_PAT, GITHUB_REPOSITORY, LOOP_ENCRYPT_KEY)
+  const repoStore = GH_PAT && LOOP_DATA_REPOSITORY
+    ? new RepoStore(GH_PAT, LOOP_DATA_REPOSITORY)
     : null;
 
-  if (LOOP_ENCRYPT_KEY) {
-    console.log(`[Loop Agent] File encryption: ENABLED`);
-  } else {
-    console.log(`[Loop Agent] File encryption: disabled (no LOOP_ENCRYPT_KEY)`);
+  // Load persisted runtime channel configuration (if any) and override env defaults.
+  if (repoStore) {
+    const persistedChannels = await loadRuntimeChannels(repoStore, LOOP_KEY);
+    if (persistedChannels.length > 0) {
+      PUSHOO_CHANNELS = persistedChannels;
+      console.log(`[Channel] Loaded runtime channel override (${persistedChannels.map(c => c.platform).join(', ')})`);
+    }
   }
+
+  console.log(`[Loop Agent] Data repository: ${LOOP_DATA_REPOSITORY || '(disabled)'}`);
+  _runtime.currentDataRepo = LOOP_DATA_REPOSITORY || '';
 
   // Load conversation history
   const history = new ConversationHistory(
@@ -4409,6 +5148,13 @@ async function main() {
     `${LOOP_HISTORY_PATH}/${LOOP_KEY}`
   );
   if (repoStore) await history.load();
+
+  // Load persistent JSON memory for remember/recall and repeated-task cache
+  const memoryStore = new AgentMemoryStore(
+    repoStore,
+    `${LOOP_HISTORY_PATH}/${LOOP_KEY}.memory.json`
+  );
+  if (repoStore) await memoryStore.load();
 
   // Create LLM and agent graph
   let agentGraph;
@@ -4428,14 +5174,14 @@ async function main() {
         console.error(`[Explorer Notify] Failed: ${e.message}`);
       }
     };
-    const tools = createBuiltinTools(repoStore, llm, explorerNotifyFn);
+    const tools = createBuiltinTools(repoStore, llm, explorerNotifyFn, memoryStore);
     console.log(`[Tools] Registered ${tools.length} tools: ${tools.map(t => t.name).join(', ')}`);
 
     const checkpointer = new Checkpointer(repoStore, LOOP_HISTORY_PATH);
     graphState = await checkpointer.load(LOOP_KEY);
 
     agentGraph = new AgentGraph({
-      llm, tools, systemPrompt: SYSTEM_PROMPT, repoStore,
+      llm, tools, systemPrompt: SYSTEM_PROMPT, repoStore, memoryStore,
       checkpointer, threadId: LOOP_KEY,
     });
 
@@ -4455,7 +5201,7 @@ async function main() {
 
   // ── Shared context (passed to listeners and browser polling) ──
   const ctx = {
-    agentGraph, graphState, history, repoStore, upstash,
+    agentGraph, graphState, history, repoStore, memoryStore, upstash,
     loopKey: LOOP_KEY, historyPath: LOOP_HISTORY_PATH,
     pushooChannels: PUSHOO_CHANNELS,
     maxRuntime: MAX_RUNTIME, pollInterval: POLL_INTERVAL,
@@ -4465,18 +5211,28 @@ async function main() {
   _runtime.startTime = Date.now();
 
   // ── Startup notification ──
+  const activeTelegramChannel = PUSHOO_CHANNELS.find(ch => normalizePlatformName(ch.platform) === 'telegram' && ch.token);
+  const activeWecomChannel = PUSHOO_CHANNELS.find(ch => normalizePlatformName(ch.platform) === 'wecombot' && ch.token);
+  const activeInputMode = activeTelegramChannel
+    ? 'Telegram'
+    : activeWecomChannel
+      ? 'WeCom'
+      : hasUpstash
+        ? 'Upstash'
+        : 'Repo';
+
   const introMsg = [
     `🤖 Loop Agent Started`,
     `Key: ${LOOP_KEY}`,
     `Model: ${AI_PROVIDER}/${AI_MODEL}`,
-    `Mode: ${inputMode}`,
+    `Mode: ${activeInputMode}`,
     `Max Runtime: ${MAX_RUNTIME / 1000}s`,
     SYSTEM_PROMPT ? `System Prompt: ${SYSTEM_PROMPT.slice(0, 200)}${SYSTEM_PROMPT.length > 200 ? '...' : ''}` : '',
   ].filter(Boolean).join('\n');
 
   // ── Start initial listener ──
-  if (useTelegram) {
-    const { botToken, chatId } = parseTelegramToken(telegramChannel.token);
+  if (activeTelegramChannel) {
+    const { botToken, chatId } = parseTelegramToken(activeTelegramChannel.token);
     // Send intro to Telegram directly
     try {
       if (chatId) {
@@ -4490,7 +5246,7 @@ async function main() {
       console.warn(`[Telegram] Failed to send intro: ${e.message}`);
     }
     _runtime.listener = await createTelegramListener(ctx);
-  } else if (useWecom) {
+  } else if (activeWecomChannel) {
     _runtime.listener = await createWecomListener(ctx);
   } else {
     // Upstash/Repo mode — no bidirectional listener

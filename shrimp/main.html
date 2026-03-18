@@ -7,8 +7,8 @@
   <meta name="description" content="A fully browser-based multi-provider AI workspace with SOUL personality customization, Skill system, encrypted storage, and GitHub Actions execution." />
 
   <!-- App styles -->
-  <script type="module" crossorigin src="/shrimp/assets/index-W_DlAYYx.js"></script>
-  <link rel="stylesheet" crossorigin href="/shrimp/assets/index-DbSr99tD.css">
+  <script type="module" crossorigin src="/shrimp/assets/index-BGnvGxqY.js"></script>
+  <link rel="stylesheet" crossorigin href="/shrimp/assets/index-DxJqINev.css">
 </head>
 <body>
 
@@ -321,6 +321,7 @@
             <input type="password" id="set-action-token" placeholder="ghp_..." autocomplete="off" />
             <button type="button" class="password-toggle" data-for="set-action-token" title="Show/hide">👁</button>
           </div>
+          <div class="hint">Recommended PAT permissions: Contents (Read and write), Actions (Read and write), Metadata (Read-only). Classic PAT: repo + workflow.</div>
         </div>
         <div class="settings-field">
           <label for="set-action-owner">Repository Owner</label>
@@ -351,9 +352,9 @@
       </div>
 
       <div class="settings-field">
-        <label for="set-action-dir">Artifacts Directory</label>
-        <input type="text" id="set-action-dir" placeholder="artifacts" value="artifacts" />
-        <div class="hint">Directory in the repo where code artifacts are pushed</div>
+        <label for="set-action-dir">Artifact Directory (Fixed)</label>
+        <input type="text" id="set-action-dir" placeholder="artifact" value="artifact" readonly />
+        <div class="hint">Code artifacts are always pushed to artifact/ in the session repository</div>
       </div>
 
     </div>
