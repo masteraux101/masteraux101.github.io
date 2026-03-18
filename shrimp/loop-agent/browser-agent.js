@@ -665,7 +665,7 @@ class BrowserAgentLoop {
   async run(task, context = {}) {
     const startTime = Date.now();
     console.log(`\n[BrowserAgent] ═══ Starting ReAct loop ═══`);
-    console.log(`[BrowserAgent] Task: ${task.slice(0, 200)}`);
+    console.log(`[BrowserAgent] Task length: ${typeof task === 'string' ? task.length : 0}`);
 
     // ── Launch browser ──
     let page;
@@ -709,8 +709,9 @@ class BrowserAgentLoop {
           break;
         }
 
-        console.log(`[BrowserAgent] Action: ${action.type} ${JSON.stringify(action.params || {}).slice(0, 100)}`);
-        if (action.reasoning) console.log(`[BrowserAgent] Reasoning: ${action.reasoning.slice(0, 150)}`);
+        const actionParamsText = JSON.stringify(action.params || {});
+        console.log(`[BrowserAgent] Action: ${action.type} (params chars: ${actionParamsText.length})`);
+        if (action.reasoning) console.log(`[BrowserAgent] Reasoning length: ${action.reasoning.length}`);
 
         // ── Step 3: ACT — execute atomic action ──
         const result = await this.actionExecutor.execute(page, action, lastSnapshot.interactiveMarks);
